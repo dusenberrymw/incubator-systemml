@@ -38,24 +38,21 @@ def gen_class_weights(df):
   return class_weights
 
 
-def read_train_val_data(spark_session, sample_size, channels, sample_prob=1):
+def read_data(spark_session, filename_template, sample_size, channels, sample_prob=1, seed=42):
   """Read and return training & validation Spark DataFrames."""
   # TODO: Clean this up
   assert channels in (1, 3)
   grayscale = False if channels == 3 else True
   
-  # Read in train & val data
-  tr_filename = os.path.join("data", "train_{}{}.parquet".format(sample_size, "_grayscale" if grayscale else ""))
-  val_filename = os.path.join("data", "val_{}{}.parquet".format(sample_size, "_grayscale" if grayscale else ""))
-  train_df = spark_session.read.load(tr_filename)
-  val_df = spark_session.read.load(val_filename)
+  # Read in data
+  filename = os.path.join("data", filename_template.format(sample_size, "_grayscale" if grayscale else ""))
+  df = spark_session.read.load(filename)
   
   # Sample (Optional)
   # TODO: Determine if coalesce actually provides a perf benefit on Spark 2.x
   if sample_prob < 1:
     p = sample_prob
-    train_df = train_df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=42)
-    val_df = val_df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=42)
+    df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
     #train_df.cache(), val_df.cache()  # cache here, or coalesce will hang
     # tc = train_df.count()
     # vc = val_df.count()
@@ -73,8 +70,21 @@ def read_train_val_data(spark_session, sample_size, channels, sample_prob=1):
     # if current_val_parts > val_parts:
     #   val_df = val_df.coalesce(val_parts)
     # train_df.cache(), val_df.cache()
+  return df
 
-  return train_df, val_df
+
+def read_train_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
+  """Read training Spark DataFrame."""
+  filename = "train_{}{}.parquet"
+  train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
+  return train_df
+
+
+def read_val_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
+  """Read validation Spark DataFrame."""
+  filename = "val_{}{}.parquet"
+  train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
+  return train_df
 
 
 # Utils for creating asynchronous queuing batch generators
