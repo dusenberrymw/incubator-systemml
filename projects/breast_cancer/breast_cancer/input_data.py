@@ -40,49 +40,58 @@ def gen_class_weights(df):
 
 def read_data(spark_session, filename_template, sample_size, channels, sample_prob=1, seed=42):
   """Read and return training & validation Spark DataFrames."""
-  # TODO: Clean this up
+  # TODO: Clean this function up!!!
   assert channels in (1, 3)
   grayscale = False if channels == 3 else True
   
-  # Read in data
-  filename = os.path.join("data", filename_template.format(sample_size, "_grayscale" if grayscale else ""))
-  df = spark_session.read.load(filename)
-  
   # Sample (Optional)
-  # TODO: Determine if coalesce actually provides a perf benefit on Spark 2.x
   if sample_prob < 1:
-    p = sample_prob
-    df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
-    #train_df.cache(), val_df.cache()  # cache here, or coalesce will hang
-    # tc = train_df.count()
-    # vc = val_df.count()
-    # 
-    # # Reduce num partitions to ideal size (~128 MB/partition, determined empirically)
-    # current_tr_parts = train_df.rdd.getNumPartitions()
-    # current_val_parts = train_df.rdd.getNumPartitions()
-    # ex_mb = sample_size * sample_size * channels * 8 / 1024 / 1024  # size of one example in MB
-    # ideal_part_size_mb = 128  # 128 MB partitions sizes are empirically ideal
-    # ideal_exs_per_part = round(ideal_part_size_mb / ex_mb)
-    # tr_parts = round(tc / ideal_exs_per_part)
-    # val_parts = round(vc / ideal_exs_per_part)
-    # if current_tr_parts > tr_parts:
-    #   train_df = train_df.coalesce(tr_parts)
-    # if current_val_parts > val_parts:
-    #   val_df = val_df.coalesce(val_parts)
-    # train_df.cache(), val_df.cache()
+    try:
+      # Ex: `train_0.01_sample_256.parquet`
+      sampled_filename_template = filename_template.format("{}_sample_".format(sample_prob), sample_size, "_grayscale" if grayscale else "")
+      filename = os.path.join("data", sampled_filename_template)
+      df = spark_session.read.load(filename)
+    except:  # Pre-sampled DataFrame not available
+      filename = os.path.join("data", filename_template.format("", sample_size, "_grayscale" if grayscale else ""))
+      df = spark_session.read.load(filename)
+      p = sample_prob
+      df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
+      # TODO: Determine if coalesce actually provides a perf benefit on Spark 2.x
+      #train_df.cache(), val_df.cache()  # cache here, or coalesce will hang
+      # tc = train_df.count()
+      # vc = val_df.count()
+      #
+      # # Reduce num partitions to ideal size (~128 MB/partition, determined empirically)
+      # current_tr_parts = train_df.rdd.getNumPartitions()
+      # current_val_parts = train_df.rdd.getNumPartitions()
+      # ex_mb = sample_size * sample_size * channels * 8 / 1024 / 1024  # size of one example in MB
+      # ideal_part_size_mb = 128  # 128 MB partitions sizes are empirically ideal
+      # ideal_exs_per_part = round(ideal_part_size_mb / ex_mb)
+      # tr_parts = round(tc / ideal_exs_per_part)
+      # val_parts = round(vc / ideal_exs_per_part)
+      # if current_tr_parts > tr_parts:
+      #   train_df = train_df.coalesce(tr_parts)
+      # if current_val_parts > val_parts:
+      #   val_df = val_df.coalesce(val_parts)
+      # train_df.cache(), val_df.cache()
+  else:
+    # Read in data
+    filename = os.path.join("data", filename_template.format("", sample_size, "_grayscale" if grayscale else ""))
+    df = spark_session.read.load(filename)
+
   return df
 
 
 def read_train_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
   """Read training Spark DataFrame."""
-  filename = "train_{}{}.parquet"
+  filename = "train_{}{}{}.parquet"
   train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
   return train_df
 
 
 def read_val_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
   """Read validation Spark DataFrame."""
-  filename = "val_{}{}.parquet"
+  filename = "val_{}{}{}.parquet"
   train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
   return train_df
 
