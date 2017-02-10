@@ -8,12 +8,23 @@ import os
 import threading
 
 import numpy as np
+import py4j
 
 
 # Utils for reading data
 
 def compute_channel_means(df, channels, size):
   """Compute the means of each color channel across the dataset."""
+  # TODO: Replace this with pyspark.ml.feature.VectorSlicer
+  # to cut vector into separate channel vectors, then grab the mean
+  # of those new columns, all using DataFrame functions, rather than
+  # RDD functions.
+  # from pyspark.ml.linalg import VectorUDT
+  # from pyspark.sql.functions import udf
+  # from pyspark.sql import functions as F
+  # as_ml = udf(lambda v: v.asML() if v is not None else None, VectorUDT())
+  # slicers[0].transform(train_df.withColumn("sample", as_ml("sample"))).select(F.avg("ch0"))
+  # slicers = [VectorSlicer(inputCol="sample", outputCol="ch{}".format(c), indices=range(c*pixels, c*pixels + pixels)) for c in range(CHANNELS)]
   def helper(x):
     x = x.sample.values
     x = np.array(x)
@@ -38,7 +49,7 @@ def gen_class_weights(df):
   return class_weights
 
 
-def read_data(spark_session, filename_template, sample_size, channels, sample_prob=1, seed=42):
+def read_data(spark_session, filename_template, sample_size, channels, sample_prob=1, keep_class_distribution=True, seed=42):
   """Read and return training & validation Spark DataFrames."""
   # TODO: Clean this function up!!!
   assert channels in (1, 3)
@@ -54,8 +65,21 @@ def read_data(spark_session, filename_template, sample_size, channels, sample_pr
     except:  # Pre-sampled DataFrame not available
       filename = os.path.join("data", filename_template.format("", sample_size, "_grayscale" if grayscale else ""))
       df = spark_session.read.load(filename)
-      p = sample_prob
-      df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
+      if keep_class_distribution:
+        # stratified sample maintaining the original class proportions
+        df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
+      else:
+        # stratified sample resulting in even class proportions
+        p = sample_prob  # sample percentage
+        n = df.count()  # num examples
+        K = 3  # num classes
+        s = p * n  # num examples in p% sample, as a fraction
+        s_k = s / K  # num examples per class in evenly-distributed p% sample, as fraction
+        class_counts_df = df.select("tumor_score").groupBy("tumor_score").count()
+        class_counts = {row["tumor_score"]:row["count"] for row in class_counts_df.collect()}
+        ps = {k:s_k/v for k,v in class_counts.items()}
+        df = df.sampleBy("tumor_score", fractions=ps, seed=seed)
+
       # TODO: Determine if coalesce actually provides a perf benefit on Spark 2.x
       #train_df.cache(), val_df.cache()  # cache here, or coalesce will hang
       # tc = train_df.count()
@@ -100,17 +124,24 @@ def read_val_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
 # TODO: Add comments to these functions
 
 def fill_partition_num_queue(partition_num_queue, num_partitions, stop_event):
+  partition_num_queue.cancel_join_thread()
   while not stop_event.is_set():
     for i in range(num_partitions):
       partition_num_queue.put(i)
 
 def fill_partition_queue(partition_queue, partition_num_queue, rdd, stop_event):
+  partition_queue.cancel_join_thread()
   while not stop_event.is_set():
-    partition_num = partition_num_queue.get()
-    partition = rdd.context.runJob(rdd, lambda x: x, [partition_num])
-    partition_queue.put(partition)
+    # py4j has some issues with imports with first starting.
+    try:
+      partition_num = partition_num_queue.get()
+      partition = rdd.context.runJob(rdd, lambda x: x, [partition_num])
+      partition_queue.put(partition)
+    except (AttributeError, py4j.protocol.Py4JError) as err:
+      print("error: {}".format(err))
 
 def fill_row_queue(row_queue, partition_queue, stop_event):
+  row_queue.cancel_join_thread()
   while not stop_event.is_set():
     rows = partition_queue.get()
     for row in rows:
@@ -129,8 +160,8 @@ def gen_batch(row_queue, batch_size):
     yield x_batch, y_batch
 
 def create_batch_generator(
-    rdd, batch_size=32, num_partition_threads=15, num_row_processes=2,
-    partition_num_queue_size=100, partition_queue_size=10, row_queue_size=1000):
+    rdd, batch_size=32, num_partition_threads=32, num_row_processes=16,
+    partition_num_queue_size=128, partition_queue_size=16, row_queue_size=2048):
   """
   Create a  multiprocess batch generator.
   
@@ -140,7 +171,7 @@ def create_batch_generator(
   time needed to fetch data from Spark so that downstream consumers
   are saturated.
   """
-  rdd.cache()
+  #rdd.cache()
   partition_num_queue = mp.Queue(partition_num_queue_size)
   partition_queue = mp.Queue(partition_queue_size)
   row_queue = mp.Queue(row_queue_size)
@@ -162,9 +193,10 @@ def create_batch_generator(
   return generator, ps, queues, stop_event
 
 def stop(processes, stop_event):
+  """Stop queuing processes."""
   stop_event.set()
   for p in processes:
     if isinstance(p, mp.Process):
       p.terminate()
-
+  mp.active_children()  # Use to join the killed processes above.
 
