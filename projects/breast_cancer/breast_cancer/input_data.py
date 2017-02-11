@@ -137,7 +137,7 @@ def fill_partition_queue(partition_queue, partition_num_queue, rdd, stop_event):
       partition_num = partition_num_queue.get()
       partition = rdd.context.runJob(rdd, lambda x: x, [partition_num])
       partition_queue.put(partition)
-    except (AttributeError, py4j.protocol.Py4JError) as err:
+    except (AttributeError, py4j.protocol.Py4JError, Exception) as err:
       print("error: {}".format(err))
 
 def fill_row_queue(row_queue, partition_queue, stop_event):
