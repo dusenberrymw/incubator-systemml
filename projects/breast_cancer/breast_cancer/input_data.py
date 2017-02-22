@@ -106,14 +106,14 @@ def read_data(spark_session, filename_template, sample_size, channels, sample_pr
   return df
 
 
-def read_train_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
+def read_train_data(spark_session, sample_size, channels, sample_prob=1, keep_class_distribution=True, seed=42):
   """Read training Spark DataFrame."""
   filename = "train_{}{}{}.parquet"
   train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
   return train_df
 
 
-def read_val_data(spark_session, sample_size, channels, sample_prob=1, seed=42):
+def read_val_data(spark_session, sample_size, channels, sample_prob=1, keep_class_distribution=True, seed=42):
   """Read validation Spark DataFrame."""
   filename = "val_{}{}{}.parquet"
   train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
