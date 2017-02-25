@@ -38,10 +38,10 @@ import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
+import org.apache.spark.sql.SparkSession;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.api.jmlc.JMLCUtils;
 import org.apache.sysml.api.mlcontext.ScriptType;
-import org.apache.sysml.api.monitoring.SparkMonitoringUtil;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
 import org.apache.sysml.conf.ConfigurationManager;
@@ -75,7 +75,6 @@ import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.spark.data.RDDObject;
 import org.apache.sysml.runtime.instructions.spark.functions.ConvertStringToLongTextPair;
 import org.apache.sysml.runtime.instructions.spark.functions.CopyTextInputFunction;
-import org.apache.sysml.runtime.instructions.spark.functions.SparkListener;
 import org.apache.sysml.runtime.instructions.spark.utils.FrameRDDConverterUtils;
 import org.apache.sysml.runtime.instructions.spark.utils.RDDConverterUtils;
 import org.apache.sysml.runtime.instructions.spark.utils.SparkUtils;
@@ -93,10 +92,6 @@ import org.apache.sysml.utils.Explain.ExplainCounts;
 import org.apache.sysml.utils.Statistics;
 
 /**
- * The MLContext API has been redesigned and this API will be deprecated.
- * Please migrate to {@link org.apache.sysml.api.mlcontext.MLContext}.
- * <p>
- * 
  * MLContext is useful for passing RDDs as input/output to SystemML. This API avoids the need to read/write
  * from HDFS (which is another way to pass inputs to SystemML).
  * <p>
@@ -107,9 +102,9 @@ import org.apache.sysml.utils.Statistics;
  * <p>
  * Create input DataFrame from CSV file and potentially perform some feature transformation
  * <pre><code>
- * scala&gt; val W = sqlContext.load("com.databricks.spark.csv", Map("path" -&gt; "W.csv", "header" -&gt; "false"))
- * scala&gt; val H = sqlContext.load("com.databricks.spark.csv", Map("path" -&gt; "H.csv", "header" -&gt; "false"))
- * scala&gt; val V = sqlContext.load("com.databricks.spark.csv", Map("path" -&gt; "V.csv", "header" -&gt; "false"))
+ * scala&gt; val W = sparkSession.load("com.databricks.spark.csv", Map("path" -&gt; "W.csv", "header" -&gt; "false"))
+ * scala&gt; val H = sparkSession.load("com.databricks.spark.csv", Map("path" -&gt; "H.csv", "header" -&gt; "false"))
+ * scala&gt; val V = sparkSession.load("com.databricks.spark.csv", Map("path" -&gt; "V.csv", "header" -&gt; "false"))
  * </code></pre>
  * <p>
  * Create MLContext
@@ -179,7 +174,10 @@ import org.apache.sysml.utils.Statistics;
  * <pre><code>  
  * synchronized(MLContext.class) { ml.execute(...); }
  * </code></pre>
+ * 
+ * @deprecated This will be removed in SystemML 1.0. Please migrate to {@link org.apache.sysml.api.mlcontext.MLContext}
  */
+@Deprecated
 public class MLContext {
 	
 	// ----------------------------------------------------
@@ -207,19 +205,6 @@ public class MLContext {
 	private Program _rtprog = null;
 	
 	private Map<String, String> _additionalConfigs = new HashMap<String, String>();
-	
-	// --------------------------------------------------
-	// _monitorUtils is set only when MLContext(sc, true)
-	private SparkMonitoringUtil _monitorUtils = null;
-	
-	/**
-	 * Experimental API. Not supported in Python MLContext API.
-	 * @return SparkMonitoringUtil the Spark monitoring util
-	 */
-	public SparkMonitoringUtil getMonitoringUtil() {
-		return _monitorUtils;
-	}
-	// --------------------------------------------------
 	
 	/**
 	 * Create an associated MLContext for given spark session.
@@ -1220,56 +1205,6 @@ public class MLContext {
 	}
 	
 	// -------------------------------- Utility methods ends ----------------------------------------------------------
-		
-	
-	// -------------------------------- Experimental API begins ----------------------------------------------------------
-	/**
-	 * Experimental api:
-	 * Setting monitorPerformance to true adds additional overhead of storing state. So, use it only if necessary.
-	 * @param sc SparkContext
-	 * @param monitorPerformance if true, monitor performance, otherwise false
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
-	 */
-	public MLContext(SparkContext sc, boolean monitorPerformance) throws DMLRuntimeException {
-		initializeSpark(sc, monitorPerformance, false);
-	}
-	
-	/**
-	 * Experimental api:
-	 * Setting monitorPerformance to true adds additional overhead of storing state. So, use it only if necessary.
-	 * @param sc JavaSparkContext
-	 * @param monitorPerformance if true, monitor performance, otherwise false
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
-	 */
-	public MLContext(JavaSparkContext sc, boolean monitorPerformance) throws DMLRuntimeException {
-		initializeSpark(sc.sc(), monitorPerformance, false);
-	}
-	
-	/**
-	 * Experimental api:
-	 * Setting monitorPerformance to true adds additional overhead of storing state. So, use it only if necessary.
-	 * @param sc SparkContext
-	 * @param monitorPerformance if true, monitor performance, otherwise false
-	 * @param setForcedSparkExecType set forced spark exec type
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
-	 */
-	public MLContext(SparkContext sc, boolean monitorPerformance, boolean setForcedSparkExecType) throws DMLRuntimeException {
-		initializeSpark(sc, monitorPerformance, setForcedSparkExecType);
-	}
-	
-	/**
-	 * Experimental api:
-	 * Setting monitorPerformance to true adds additional overhead of storing state. So, use it only if necessary.
-	 * @param sc JavaSparkContext
-	 * @param monitorPerformance if true, monitor performance, otherwise false
-	 * @param setForcedSparkExecType set forced spark exec type
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
-	 */
-	public MLContext(JavaSparkContext sc, boolean monitorPerformance, boolean setForcedSparkExecType) throws DMLRuntimeException {
-		initializeSpark(sc.sc(), monitorPerformance, setForcedSparkExecType);
-	}
-	
-	// -------------------------------- Experimental API ends ----------------------------------------------------------
 	
 	// -------------------------------- Private methods begins ----------------------------------------------------------
 	private boolean isRegisteredAsInput(String varName) {
@@ -1348,20 +1283,8 @@ public class MLContext {
 			DMLScript.rtplatform = RUNTIME_PLATFORM.SPARK;
 		else
 			DMLScript.rtplatform = RUNTIME_PLATFORM.HYBRID_SPARK;
-		
-		if(monitorPerformance) {
-			initializeSparkListener(sc);
-		}
 	}
 	
-	private void initializeSparkListener(SparkContext sc) throws DMLRuntimeException {
-		if(compareVersion(sc.version(), "1.4.0")  < 0 ) {
-			throw new DMLRuntimeException("Expected spark version >= 1.4.0 for monitoring MLContext performance");
-		}
-		SparkListener sparkListener = new SparkListener(sc);
-		_monitorUtils = new SparkMonitoringUtil(sparkListener);
-		sc.addSparkListener(sparkListener);
-	}
 	
 	/**
 	 * Execute a script stored in a string.
@@ -1503,9 +1426,6 @@ public class MLContext {
 			
 			// Set active MLContext.
 			_activeMLContext = this;
-			if(_monitorUtils != null) {
-				_monitorUtils.resetMonitoringData();
-			}
 			
 			if( OptimizerUtils.isSparkExecutionMode() ) {
 				// Depending on whether registerInput/registerOutput was called initialize the variables 
@@ -1590,9 +1510,6 @@ public class MLContext {
 		
 		//read dml script string
 		String dmlScriptStr = DMLScript.readDMLScript( isFile?"-f":"-s", dmlScriptFilePath);
-		if(_monitorUtils != null) {
-			_monitorUtils.setDMLString(dmlScriptStr);
-		}
 		
 		//simplified compilation chain
 		_rtprog = null;
@@ -1654,9 +1571,6 @@ public class MLContext {
 		//core execute runtime program	
 		_rtprog.execute( ec );
 		
-		if(_monitorUtils != null)
-			_monitorUtils.setExplainOutput(Explain.explain(_rtprog));
-		
 		return ec;
 	}
 	
@@ -1665,7 +1579,26 @@ public class MLContext {
 	// TODO: Add additional create to provide sep, missing values, etc. for CSV
 	/**
 	 * Experimental API: Might be discontinued in future release
-	 * @param sqlContext the SQLContext
+	 * @param sparkSession the Spark Session
+	 * @param filePath the file path
+	 * @param format the format
+	 * @return the MLMatrix
+	 * @throws IOException if IOException occurs
+	 * @throws DMLException if DMLException occurs
+	 * @throws ParseException if ParseException occurs
+	 */
+	public MLMatrix read(SparkSession sparkSession, String filePath, String format) throws IOException, DMLException, ParseException {
+		this.reset();
+		this.registerOutput("output");
+		MLOutput out = this.executeScript("output = read(\"" + filePath + "\", format=\"" + format + "\"); " + MLMatrix.writeStmt);
+		JavaPairRDD<MatrixIndexes, MatrixBlock> blocks = out.getBinaryBlockedRDD("output");
+		MatrixCharacteristics mcOut = out.getMatrixCharacteristics("output");
+		return MLMatrix.createMLMatrix(this, sparkSession, blocks, mcOut);
+	}
+
+	/**
+	 * Experimental API: Might be discontinued in future release
+	 * @param sqlContext the SQL Context
 	 * @param filePath the file path
 	 * @param format the format
 	 * @return the MLMatrix
@@ -1674,11 +1607,7 @@ public class MLContext {
 	 * @throws ParseException if ParseException occurs
 	 */
 	public MLMatrix read(SQLContext sqlContext, String filePath, String format) throws IOException, DMLException, ParseException {
-		this.reset();
-		this.registerOutput("output");
-		MLOutput out = this.executeScript("output = read(\"" + filePath + "\", format=\"" + format + "\"); " + MLMatrix.writeStmt);
-		JavaPairRDD<MatrixIndexes, MatrixBlock> blocks = out.getBinaryBlockedRDD("output");
-		MatrixCharacteristics mcOut = out.getMatrixCharacteristics("output");
-		return MLMatrix.createMLMatrix(this, sqlContext, blocks, mcOut);
-	}	
+		SparkSession sparkSession = sqlContext.sparkSession();
+		return read(sparkSession, filePath, format);
+	}
 }

@@ -81,12 +81,12 @@ import org.apache.sysml.runtime.controlprogram.parfor.TaskPartitionerNaive;
 import org.apache.sysml.runtime.controlprogram.parfor.TaskPartitionerStatic;
 import org.apache.sysml.runtime.controlprogram.parfor.mqo.RuntimePiggybacking;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.CostEstimator;
+import org.apache.sysml.runtime.controlprogram.parfor.opt.CostEstimator.TestMeasure;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.CostEstimatorHops;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptTree;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptTreeConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptimizationWrapper;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptimizerRuleBased;
-import org.apache.sysml.runtime.controlprogram.parfor.opt.PerfTestTool.TestMeasure;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.ProgramRecompiler;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.Stat;
@@ -147,8 +147,7 @@ public class ParForProgramBlock extends ForProgramBlock
 		COLUMN_WISE,
 		COLUMN_BLOCK_WISE,
 		COLUMN_BLOCK_WISE_N,
-		BLOCK_WISE_M_N,
-		UNSPECIFIED; // TODO investigate unused enum constant
+		BLOCK_WISE_M_N;
 
 		/**
 		 * Note: Robust version of valueOf in order to return NONE without exception
@@ -196,12 +195,10 @@ public class ParForProgramBlock extends ForProgramBlock
 	
 	//optimizer
 	public enum POptMode{
-		NONE,       //no optimization, use defaults and specified parameters
-		RULEBASED, //some simple rule-based rewritings (affects only parfor PB) - similar to HEURISTIC but no exec time estimates
+		NONE,        //no optimization, use defaults and specified parameters
+		RULEBASED,   //rule-based rewritings with memory constraints 
 		CONSTRAINED, //same as rule-based but with given params as constraints
-		HEURISTIC, //some simple cost-based rewritings (affects only parfor PB)
-		GREEDY,     //greedy cost-based optimization algorithm (potentially local optimum, affects all instructions)
-		FULL_DP,    //full cost-based optimization algorithm (global optimum, affects all instructions)				
+		HEURISTIC,   //smae as rule-based but with time-based cost estimates
 	}
 		
 	// internal parameters

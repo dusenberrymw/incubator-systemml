@@ -37,7 +37,7 @@ import org.apache.spark.ml.linalg.VectorUDT;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SQLContext;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.sysml.api.MLContextProxy;
@@ -1100,7 +1100,9 @@ public class MLContextConversionUtil {
 					if (j > 0) {
 						sb.append(delimiter);
 					}
-					sb.append(fb.get(i, j));
+					if (fb.get(i, j) != null) {
+						sb.append(fb.get(i, j));
+					}
 				}
 				list.add(sb.toString());
 			}
@@ -1185,13 +1187,15 @@ public class MLContextConversionUtil {
 			for (int i = 0; i < rows; i++) {
 				sb = new StringBuilder();
 				for (int j = 0; j < cols; j++) {
-					sb = new StringBuilder();
-					sb.append(i + 1);
-					sb.append(" ");
-					sb.append(j + 1);
-					sb.append(" ");
-					sb.append(fb.get(i, j));
-					list.add(sb.toString());
+					if (fb.get(i, j) != null) {
+						sb = new StringBuilder();
+						sb.append(i + 1);
+						sb.append(" ");
+						sb.append(j + 1);
+						sb.append(" ");
+						sb.append(fb.get(i, j));
+						list.add(sb.toString());
+					}
 				}
 			}
 
@@ -1239,9 +1243,9 @@ public class MLContextConversionUtil {
 			MatrixCharacteristics mc = matrixObject.getMatrixCharacteristics();
 
 			SparkContext sc = ((MLContext) MLContextProxy.getActiveMLContextForAPI()).getSparkContext();
-			SQLContext sqlctx = new SQLContext(sc);
+			SparkSession sparkSession = SparkSession.builder().sparkContext(sc).getOrCreate();
 			
-			return RDDConverterUtils.binaryBlockToDataFrame(sqlctx, binaryBlockMatrix, mc, isVectorDF);			
+			return RDDConverterUtils.binaryBlockToDataFrame(sparkSession, binaryBlockMatrix, mc, isVectorDF);
 		} 
 		catch (DMLRuntimeException e) {
 			throw new MLContextException("DMLRuntimeException while converting matrix object to DataFrame", e);
@@ -1266,7 +1270,8 @@ public class MLContextConversionUtil {
 			MatrixCharacteristics mc = frameObject.getMatrixCharacteristics();
 
 			JavaSparkContext jsc = MLContextUtil.getJavaSparkContext((MLContext) MLContextProxy.getActiveMLContextForAPI());
-			return FrameRDDConverterUtils.binaryBlockToDataFrame(new SQLContext(jsc), binaryBlockFrame, mc, frameObject.getSchema());
+			SparkSession sparkSession = SparkSession.builder().sparkContext(jsc.sc()).getOrCreate();
+			return FrameRDDConverterUtils.binaryBlockToDataFrame(sparkSession, binaryBlockFrame, mc, frameObject.getSchema());
 		} 
 		catch (DMLRuntimeException e) {
 			throw new MLContextException("DMLRuntimeException while converting frame object to DataFrame", e);

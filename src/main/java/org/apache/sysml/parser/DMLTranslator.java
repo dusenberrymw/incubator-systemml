@@ -1795,8 +1795,9 @@ public class DMLTranslator
 			target = createTarget(source);
 			if(left.getDataType() == DataType.MATRIX || right.getDataType() == DataType.MATRIX) {
 				// Added to support matrix relational comparison
+				// (we support only matrices of value type double)
 				target.setDataType(DataType.MATRIX);
-				target.setValueType(ValueType.BOOLEAN);
+				target.setValueType(ValueType.DOUBLE);
 			}
 			else {
 				// Added to support scalar relational comparison
@@ -2898,9 +2899,9 @@ public class DMLTranslator
 	}
 	
 	private void setBlockSizeAndRefreshSizeInfo(Hop in, Hop out) {
-		HopRewriteUtils.setOutputBlocksizes(out, in.getRowsInBlock(), in.getColsInBlock());
-		HopRewriteUtils.copyLineNumbers(in, out);
+		out.setOutputBlocksizes(in.getRowsInBlock(), in.getColsInBlock());
 		out.refreshSizeInformation();
+		HopRewriteUtils.copyLineNumbers(in, out);
 	}
 
 	private ArrayList<Hop> getALHopsForConvOpPoolingCOL2IM(Hop first, BuiltinFunctionExpression source, int skip, HashMap<String, Hop> hops) throws ParseException {

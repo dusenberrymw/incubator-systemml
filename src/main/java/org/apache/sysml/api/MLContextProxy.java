@@ -22,11 +22,9 @@ package org.apache.sysml.api;
 import java.util.ArrayList;
 
 import org.apache.sysml.api.mlcontext.MLContextException;
-import org.apache.sysml.api.monitoring.Location;
 import org.apache.sysml.parser.Expression;
 import org.apache.sysml.parser.LanguageException;
 import org.apache.sysml.runtime.instructions.Instruction;
-import org.apache.sysml.runtime.instructions.spark.SPInstruction;
 
 /**
  * The purpose of this proxy is to shield systemml internals from direct access to MLContext
@@ -48,6 +46,7 @@ public class MLContextProxy
 		return _active;
 	}
 
+	@SuppressWarnings("deprecation")
 	public static ArrayList<Instruction> performCleanupAfterRecompilation(ArrayList<Instruction> tmp) 
 	{
 		if(org.apache.sysml.api.MLContext.getActiveMLContext() != null) {
@@ -58,6 +57,7 @@ public class MLContextProxy
 		return tmp;
 	}
 
+	@SuppressWarnings("deprecation")
 	public static void setAppropriateVarsForRead(Expression source, String targetname) 
 		throws LanguageException 
 	{
@@ -68,6 +68,7 @@ public class MLContextProxy
 		}
 	}
 
+	@SuppressWarnings("deprecation")
 	public static Object getActiveMLContext() {
 		if (org.apache.sysml.api.MLContext.getActiveMLContext() != null) {
 			return org.apache.sysml.api.MLContext.getActiveMLContext();
@@ -83,40 +84,6 @@ public class MLContextProxy
 		}
 		throw new MLContextException("No MLContext object is currently active. Have you created one? "
 				+ "Hint: in Scala, 'val ml = new MLContext(sc)'", true);
-	}
-
-	public static void setInstructionForMonitoring(Instruction inst) {
-		Location loc = inst.getLocation();
-		if (loc == null) {
-			return;
-		}
-		
-		if (org.apache.sysml.api.MLContext.getActiveMLContext() != null) {
-			org.apache.sysml.api.MLContext mlContext = org.apache.sysml.api.MLContext.getActiveMLContext();
-			if(mlContext.getMonitoringUtil() != null) {
-				mlContext.getMonitoringUtil().setInstructionLocation(loc, inst);
-			}
-		} else if (org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext() != null) {
-			org.apache.sysml.api.mlcontext.MLContext mlContext = org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext();
-			if(mlContext.getSparkMonitoringUtil() != null) {
-				mlContext.getSparkMonitoringUtil().setInstructionLocation(loc, inst);
-			}
-		}
-	}
-	
-	public static void addRDDForInstructionForMonitoring(SPInstruction inst, Integer rddID) {
-		
-		if (org.apache.sysml.api.MLContext.getActiveMLContext() != null) {
-			org.apache.sysml.api.MLContext mlContext = org.apache.sysml.api.MLContext.getActiveMLContext();
-			if(mlContext.getMonitoringUtil() != null) {
-				mlContext.getMonitoringUtil().addRDDForInstruction(inst, rddID);
-			}
-		} else if (org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext() != null) {
-			org.apache.sysml.api.mlcontext.MLContext mlContext = org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext();
-			if(mlContext.getSparkMonitoringUtil() != null) {
-				mlContext.getSparkMonitoringUtil().addRDDForInstruction(inst, rddID);
-			}
-		}
 	}
 	
 }

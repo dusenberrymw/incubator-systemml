@@ -66,12 +66,13 @@ public class OptNode
 	}
 	
 	public enum ParamType{
-		OPTYPE, // TODO investigate unused enum constant
 		OPSTRING,
 		TASK_PARTITIONER,
 		TASK_SIZE,
 		DATA_PARTITIONER,
 		DATA_PARTITION_FORMAT,
+		DATA_PARTITION_COND,
+		DATA_PARTITION_COND_MEM,
 		RESULT_MERGE,
 		NUM_ITERATIONS,
 		RECURSIVE_CALL

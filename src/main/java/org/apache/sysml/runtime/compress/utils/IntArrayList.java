@@ -66,11 +66,19 @@ public class IntArrayList
 		_size++;
 	}
 
+	/**
+	 * Returns the underlying array of offsets. Note that this array might be 
+	 * physically larger than the actual length of the offset lists. Use size() 
+	 * to obtain the actual length.
+	 * 
+	 * @return integer array of offsets, the physical array length
+	 * may be larger than the length of the offset list 
+	 */
 	public int[] extractValues() {
 		if( _size == 1 )
 			return new int[] { _val0 };
 		else
-			return Arrays.copyOfRange(_data, 0, _size);
+			return _data;
 	}
 
 	private void resize() {
@@ -80,8 +88,6 @@ public class IntArrayList
 					"IntArrayList resize leads to integer overflow: size=" + _size);
 
 		// resize data array and copy existing contents
-		int[] newdata = new int[_data.length * RESIZE_FACTOR];
-		System.arraycopy(_data, 0, newdata, 0, _size);
-		_data = newdata;
+		_data = Arrays.copyOf(_data, _data.length * RESIZE_FACTOR);
 	}
 }

@@ -35,6 +35,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.storage.RDDInfo;
 import org.apache.spark.storage.StorageLevel;
+import org.apache.spark.util.LongAccumulator;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.MLContextProxy;
 import org.apache.sysml.conf.ConfigurationManager;
@@ -48,13 +49,13 @@ import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.instructions.spark.CheckpointSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction;
 import org.apache.sysml.runtime.instructions.spark.data.BroadcastObject;
 import org.apache.sysml.runtime.instructions.spark.data.LineageObject;
 import org.apache.sysml.runtime.instructions.spark.data.PartitionedBlock;
 import org.apache.sysml.runtime.instructions.spark.data.PartitionedBroadcast;
 import org.apache.sysml.runtime.instructions.spark.data.RDDObject;
+import org.apache.sysml.runtime.instructions.spark.functions.ComputeBinaryBlockNnzFunction;
 import org.apache.sysml.runtime.instructions.spark.functions.CopyBinaryCellFunction;
 import org.apache.sysml.runtime.instructions.spark.functions.CopyFrameBlockPairFunction;
 import org.apache.sysml.runtime.instructions.spark.functions.CopyTextInputFunction;
@@ -170,6 +171,7 @@ public class SparkExecutionContext extends ExecutionContext
 		return LAZY_SPARKCTX_CREATION;
 	}
 
+	@SuppressWarnings("deprecation")
 	private synchronized static void initSparkContext()
 	{
 		//check for redundant spark context init
@@ -776,13 +778,14 @@ public class SparkExecutionContext extends ExecutionContext
 			//determine target sparse/dense representation
 			long lnnz = (nnz >= 0) ? nnz : (long)rlen * clen;
 			boolean sparse = MatrixBlock.evalSparseFormatInMemory(rlen, clen, lnnz);
-						
+			
 			//create output matrix block (w/ lazy allocation)
-			out = new MatrixBlock(rlen, clen, sparse);
+			out = new MatrixBlock(rlen, clen, sparse, lnnz);
 			
 			List<Tuple2<MatrixIndexes,MatrixBlock>> list = rdd.collect();
 			
 			//copy blocks one-at-a-time into output matrix block
+			long aNnz = 0; 
 			for( Tuple2<MatrixIndexes,MatrixBlock> keyval : list )
 			{
 				//unpack index-block pair
@@ -795,21 +798,26 @@ public class SparkExecutionContext extends ExecutionContext
 				int rows = block.getNumRows();
 				int cols = block.getNumColumns();
 				
+				//append block
 				if( sparse ) { //SPARSE OUTPUT
-					//append block to sparse target in order to avoid shifting
-					//note: this append requires a final sort of sparse rows
-					out.appendToSparse(block, row_offset, col_offset);
+					//append block to sparse target in order to avoid shifting, where
+					//we use a shallow row copy in case of MCSR and single column blocks
+					//note: this append requires, for multiple column blocks, a final sort 
+					out.appendToSparse(block, row_offset, col_offset, clen>bclen);
 				}
 				else { //DENSE OUTPUT
 					out.copy( row_offset, row_offset+rows-1, 
 							  col_offset, col_offset+cols-1, block, false );	
 				}
+				
+				//incremental maintenance nnz
+				aNnz += block.getNonZeros();
 			}
 			
 			//post-processing output matrix
-			if( sparse )
+			if( sparse && clen>bclen )
 				out.sortSparseRows();
-			out.recomputeNonZeros();
+			out.setNonZeros(aNnz);
 			out.examSparsity();
 		}
 		
@@ -959,8 +967,9 @@ public class SparkExecutionContext extends ExecutionContext
 	{
 		JavaPairRDD<MatrixIndexes,MatrixBlock> lrdd = (JavaPairRDD<MatrixIndexes, MatrixBlock>) rdd.getRDD();
 		
-		//recompute nnz 
-		long nnz = SparkUtils.computeNNZFromBlocks(lrdd);
+		//piggyback nnz maintenance on write
+		LongAccumulator aNnz = getSparkContextStatic().sc().longAccumulator("nnz");
+		lrdd = lrdd.mapValues(new ComputeBinaryBlockNnzFunction(aNnz));
 		
 		//save file is an action which also triggers nnz maintenance
 		lrdd.saveAsHadoopFile(path, 
@@ -969,7 +978,7 @@ public class SparkExecutionContext extends ExecutionContext
 				oinfo.outputFormatClass);
 		
 		//return nnz aggregate of all blocks
-		return nnz;
+		return aNnz.value();
 	}
 
 	@SuppressWarnings("unchecked")
@@ -1171,8 +1180,8 @@ public class SparkExecutionContext extends ExecutionContext
 					((RDDObject)mo.getRDDHandle().getLineageChilds().get(0)).getRDD();
 			
 			//investigate issue of unnecessarily large number of partitions
-			int numPartitions = CheckpointSPInstruction.getNumCoalescePartitions(mcIn, in);
-			if( numPartitions < in.partitions().size() )
+			int numPartitions = SparkUtils.getNumPreferredPartitions(mcIn, in);
+			if( numPartitions < in.getNumPartitions() )
 				in = in.coalesce( numPartitions );
 		}
 		
@@ -1262,9 +1271,7 @@ public class SparkExecutionContext extends ExecutionContext
 		
 		if( parentLineage == null || parentLineage.getRDD() == null )
 			return;
-		
-		MLContextProxy.addRDDForInstructionForMonitoring(inst, parentLineage.getRDD().id());
-		
+	
 		JavaPairRDD<?, ?> out = parentLineage.getRDD();
 		JavaPairRDD<?, ?> in1 = null; 
 		JavaPairRDD<?, ?> in2 = null;
@@ -1293,6 +1300,7 @@ public class SparkExecutionContext extends ExecutionContext
 	// The most expensive operation here is rdd.toDebugString() which can be a major hit because
 	// of unrolling lazy evaluation of Spark. Hence, it is guarded against it along with flag 'PRINT_EXPLAIN_WITH_LINEAGE' which is 
 	// enabled only through MLContext. This way, it doesnot affect our performance evaluation through non-MLContext path
+	@SuppressWarnings("unused")
 	private void setLineageInfoForExplain(SPInstruction inst, 
 			JavaPairRDD<?, ?> out, 
 			JavaPairRDD<?, ?> in1, String in1Name, 
@@ -1340,29 +1348,6 @@ public class SparkExecutionContext extends ExecutionContext
 			else {
 				outDebugString += "\n" + outLines[i];
 			}
-		}
-		
-		
-		Object mlContextObj = MLContextProxy.getActiveMLContext();
-		if (mlContextObj != null) {
-			if (mlContextObj instanceof org.apache.sysml.api.MLContext) {
-				org.apache.sysml.api.MLContext mlCtx = (org.apache.sysml.api.MLContext) mlContextObj;
-				if (mlCtx.getMonitoringUtil() != null) {
-					mlCtx.getMonitoringUtil().setLineageInfo(inst, outDebugString);
-				} else {
-					throw new DMLRuntimeException("The method setLineageInfoForExplain should be called only through MLContext");
-				}
-			} else if (mlContextObj instanceof org.apache.sysml.api.mlcontext.MLContext) {
-				org.apache.sysml.api.mlcontext.MLContext mlCtx = (org.apache.sysml.api.mlcontext.MLContext) mlContextObj;
-				if (mlCtx.getSparkMonitoringUtil() != null) {
-					mlCtx.getSparkMonitoringUtil().setLineageInfo(inst, outDebugString);
-				} else {
-					throw new DMLRuntimeException("The method setLineageInfoForExplain should be called only through MLContext");
-				}
-			}
-			
-		} else {
-			throw new DMLRuntimeException("The method setLineageInfoForExplain should be called only through MLContext");
 		}
 		
 	}

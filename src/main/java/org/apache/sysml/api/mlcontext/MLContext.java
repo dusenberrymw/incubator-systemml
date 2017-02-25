@@ -26,13 +26,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.log4j.Logger;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.api.MLContextProxy;
 import org.apache.sysml.api.jmlc.JMLCUtils;
-import org.apache.sysml.api.monitoring.SparkMonitoringUtil;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.parser.DataExpression;
@@ -46,7 +46,6 @@ import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
-import org.apache.sysml.runtime.instructions.spark.functions.SparkListener;
 import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.utils.Explain.ExplainType;
@@ -60,17 +59,17 @@ public class MLContext {
 	/**
 	 * Minimum Spark version supported by SystemML.
 	 */
-	public static final String SYSTEMML_MINIMUM_SPARK_VERSION = "1.4.0";
+	public static final String SYSTEMML_MINIMUM_SPARK_VERSION = "2.1.0";
+
+	/**
+	 * Logger for MLContext
+	 */
+	public static Logger log = Logger.getLogger(MLContext.class);
 
 	/**
 	 * SparkContext object.
 	 */
 	private SparkContext sc = null;
-
-	/**
-	 * SparkMonitoringUtil monitors SystemML performance on Spark.
-	 */
-	private SparkMonitoringUtil sparkMonitoringUtil = null;
 
 	/**
 	 * Reference to the currently executing script.
@@ -218,12 +217,17 @@ public class MLContext {
 	 */
 	private void initMLContext(SparkContext sc, boolean monitorPerformance) {
 
+		try {
+			MLContextUtil.verifySparkVersionSupported(sc);
+		} catch (MLContextException e) {
+			log.warn("Apache Spark " + SYSTEMML_MINIMUM_SPARK_VERSION + " or above is recommended for SystemML " + this.info().version());
+		}
+
 		if (activeMLContext == null) {
 			System.out.println(MLContextUtil.welcomeMessage());
 		}
 
 		this.sc = sc;
-		MLContextUtil.verifySparkVersionSupported(sc);
 		// by default, run in hybrid Spark mode for optimal performance
 		DMLScript.rtplatform = RUNTIME_PLATFORM.HYBRID_SPARK;
 
@@ -232,12 +236,6 @@ public class MLContext {
 
 		MLContextUtil.setDefaultConfig();
 		MLContextUtil.setCompilerConfig();
-
-		if (monitorPerformance) {
-			SparkListener sparkListener = new SparkListener(sc);
-			sparkMonitoringUtil = new SparkMonitoringUtil(sparkListener);
-			sc.addSparkListener(sparkListener);
-		}
 	}
 
 	/**
@@ -273,7 +271,7 @@ public class MLContext {
 	 * @return the results as a MLResults object
 	 */
 	public MLResults execute(Script script) {
-		ScriptExecutor scriptExecutor = new ScriptExecutor(sparkMonitoringUtil);
+		ScriptExecutor scriptExecutor = new ScriptExecutor();
 		scriptExecutor.setExplain(explain);
 		scriptExecutor.setExplainLevel(explainLevel);
 		scriptExecutor.setStatistics(statistics);
@@ -323,15 +321,6 @@ public class MLContext {
 	 */
 	public void setConfig(String configFilePath) {
 		MLContextUtil.setConfig(configFilePath);
-	}
-
-	/**
-	 * Obtain the SparkMonitoringUtil if it is available.
-	 *
-	 * @return the SparkMonitoringUtil if it is available.
-	 */
-	public SparkMonitoringUtil getSparkMonitoringUtil() {
-		return sparkMonitoringUtil;
 	}
 
 	/**

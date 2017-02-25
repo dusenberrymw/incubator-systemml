@@ -191,7 +191,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			else if( et == ExecType.SPARK ) 
 			{
 				//matrix mult operation selection part 3 (SPARK type)
-				boolean tmmRewrite = input1 instanceof ReorgOp && ((ReorgOp)input1).getOp()==ReOrgOp.TRANSPOSE;
+				boolean tmmRewrite = HopRewriteUtils.isTransposeOperation(input1);
 				_method = optFindMMultMethodSpark ( 
 						input1.getDim1(), input1.getDim2(), input1.getRowsInBlock(), input1.getColsInBlock(), input1.getNnz(),   
 						input2.getDim1(), input2.getDim2(), input2.getRowsInBlock(), input2.getColsInBlock(), input2.getNnz(),
@@ -358,7 +358,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		//account for potential final dense-sparse transformation (worst-case sparse representation)
 		if( dim2 >= 2 ) //vectors always dense
-			ret = OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, MatrixBlock.getSparsityTurnPoint());
+			ret = OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, MatrixBlock.SPARSITY_TURN_POINT);
 		
 		return ret;
 	}
@@ -437,17 +437,12 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			checkAndSetInvalidCPDimsAndSize();
 		}
 		
-		//spark-specific decision refinement (execute binary aggregate w/ left spark input and 
+		//spark-specific decision refinement (execute binary aggregate w/ left or right spark input and 
 		//single parent also in spark because it's likely cheap and reduces data transfer)
-		if( _etype == ExecType.CP && _etypeForced != ExecType.CP	
-			&& !(getInput().get(0) instanceof ReorgOp && ((ReorgOp)getInput().get(0)).getOp()==ReOrgOp.TRANSPOSE)
-			&& !(getInput().get(0) instanceof DataOp)  //input is not checkpoint
-			&& getInput().get(0).getParent().size()==1 //bagg is only parent	
-			&& !getInput().get(0).areDimsBelowThreshold() 
-			&& getInput().get(0).optFindExecType() == ExecType.SPARK
-			&& getInput().get(0).getOutputMemEstimate()>getOutputMemEstimate() )    
+		if( _etype == ExecType.CP && _etypeForced != ExecType.CP &&
+			(isApplicableForTransitiveSparkExecType(true) || isApplicableForTransitiveSparkExecType(false)) )    
 		{
-			//pull unary aggregate into spark 
+			//pull binary aggregate into spark 
 			_etype = ExecType.SPARK;
 		}
 		
@@ -457,6 +452,18 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		}
 		
 		return _etype;
+	}
+	
+	private boolean isApplicableForTransitiveSparkExecType(boolean left) 
+		throws HopsException 
+	{
+		int index = left ? 0 : 1;
+		return !(getInput().get(index) instanceof DataOp && ((DataOp)getInput().get(index)).requiresCheckpoint())  
+			&& !HopRewriteUtils.isTransposeOperation(getInput().get(index))
+			&& getInput().get(index).getParent().size()==1 //bagg is only parent	
+			&& !getInput().get(index).areDimsBelowThreshold() 
+			&& getInput().get(index).optFindExecType() == ExecType.SPARK
+			&& getInput().get(index).getOutputMemEstimate()>getOutputMemEstimate();
 	}
 	
 	/**
@@ -472,15 +479,13 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		Hop in1 = getInput().get(0);
 		Hop in2 = getInput().get(1);
 		
-		if(    in1 instanceof ReorgOp 
-			&& ((ReorgOp)in1).getOp() == ReOrgOp.TRANSPOSE 
+		if( HopRewriteUtils.isTransposeOperation(in1)
 			&& in1.getInput().get(0) == in2 )
 		{
 			ret = MMTSJType.LEFT;
 		}
 		
-		if(    in2 instanceof ReorgOp 
-			&& ((ReorgOp)in2).getOp() == ReOrgOp.TRANSPOSE 
+		if( HopRewriteUtils.isTransposeOperation(in2) 
 			&& in2.getInput().get(0) == in1 )
 		{
 			ret = MMTSJType.RIGHT;
@@ -503,7 +508,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		Hop in2 = getInput().get(1);
 		
 		//check for transpose left input (both chain types)
-		if( in1 instanceof ReorgOp && ((ReorgOp)in1).getOp() == ReOrgOp.TRANSPOSE )
+		if( HopRewriteUtils.isTransposeOperation(in1) )
 		{
 			Hop X = in1.getInput().get(0);
 				
@@ -608,7 +613,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		Hop rightInput = getInput().get(1);
 		
 		Hop nrow = HopRewriteUtils.createValueHop(pmInput, true); //NROW
-		HopRewriteUtils.setOutputBlocksizes(nrow, 0, 0);
+		nrow.setOutputBlocksizes(0, 0);
 		nrow.setForcedExecType(ExecType.CP);
 		HopRewriteUtils.copyLineNumbers(this, nrow);
 		Lop lnrow = nrow.constructLops();
@@ -637,7 +642,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			Hop h2 = getInput().get(1);
 			Lop left; Lop right;
 			boolean isLeftTransposed; boolean isRightTransposed;
-			if( h1 instanceof ReorgOp && ((ReorgOp)h1).getOp()==ReOrgOp.TRANSPOSE ) {
+			if( HopRewriteUtils.isTransposeOperation(h1) ) {
 				isLeftTransposed = true;
 				left = h1.getInput().get(0).constructLops();
 			}
@@ -645,7 +650,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 				isLeftTransposed = false;
 				left = h1.constructLops();
 			}
-			if( h2 instanceof ReorgOp && ((ReorgOp)h2).getOp()==ReOrgOp.TRANSPOSE ) {
+			if( HopRewriteUtils.isTransposeOperation(h2) ) {
 				isRightTransposed = true;
 				right = h2.getInput().get(0).constructLops();
 			}
@@ -865,8 +870,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		Hop pmInput = getInput().get(0);
 		Hop rightInput = getInput().get(1);
-		long brlen = pmInput.getRowsInBlock();
-		long bclen = pmInput.getColsInBlock();
 		
 		Lop lpmInput = pmInput.constructLops();
 		Hop nrow = null;
@@ -880,30 +883,19 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			//v = rowMaxIndex(t(pm)) * rowMax(t(pm)) 
 			ReorgOp transpose = HopRewriteUtils.createTranspose(pmInput);
 			transpose.setForcedExecType(ExecType.SPARK);
-			HopRewriteUtils.copyLineNumbers(this, transpose);	
 			
-			AggUnaryOp agg1 = new AggUnaryOp("tmp2a", DataType.MATRIX, ValueType.DOUBLE, AggOp.MAXINDEX, Direction.Row, transpose);
-			HopRewriteUtils.setOutputBlocksizes(agg1, brlen, bclen);
-			agg1.refreshSizeInformation();
+			AggUnaryOp agg1 = HopRewriteUtils.createAggUnaryOp(transpose, AggOp.MAXINDEX, Direction.Row);
 			agg1.setForcedExecType(ExecType.SPARK);
-			HopRewriteUtils.copyLineNumbers(this, agg1);
 			
-			AggUnaryOp agg2 = new AggUnaryOp("tmp2b", DataType.MATRIX, ValueType.DOUBLE, AggOp.MAX, Direction.Row, transpose);
-			HopRewriteUtils.setOutputBlocksizes(agg2, brlen, bclen);
-			agg2.refreshSizeInformation();
+			AggUnaryOp agg2 = HopRewriteUtils.createAggUnaryOp(transpose, AggOp.MAX, Direction.Row);
 			agg2.setForcedExecType(ExecType.SPARK);
-			HopRewriteUtils.copyLineNumbers(this, agg2);
 			
-			BinaryOp mult = new BinaryOp("tmp3", DataType.MATRIX, ValueType.DOUBLE, OpOp2.MULT, agg1, agg2);
-			HopRewriteUtils.setOutputBlocksizes(mult, brlen, bclen); 
-			mult.refreshSizeInformation();
+			BinaryOp mult = HopRewriteUtils.createBinary(agg1, agg2, OpOp2.MULT);
 			mult.setForcedExecType(ExecType.SPARK);
-			//mult.computeMemEstimate(memo); //select exec type
-			HopRewriteUtils.copyLineNumbers(this, mult);
 			
 			//compute NROW target via nrow(m)
 			nrow = HopRewriteUtils.createValueHop(pmInput, true);
-			HopRewriteUtils.setOutputBlocksizes(nrow, 0, 0);
+			nrow.setOutputBlocksizes(0, 0);
 			nrow.setForcedExecType(ExecType.CP);
 			HopRewriteUtils.copyLineNumbers(this, nrow);
 			
@@ -914,7 +906,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		{
 			//compute NROW target via max(v)
 			nrow = HopRewriteUtils.createAggUnaryOp(pmInput, AggOp.MAX, Direction.RowCol); 
-			HopRewriteUtils.setOutputBlocksizes(nrow, 0, 0);
+			nrow.setOutputBlocksizes(0, 0);
 			nrow.setForcedExecType(etVect);
 			HopRewriteUtils.copyLineNumbers(this, nrow);
 		}
@@ -1232,8 +1224,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		Hop pmInput = getInput().get(0);
 		Hop rightInput = getInput().get(1);
-		long brlen = pmInput.getRowsInBlock();
-		long bclen = pmInput.getColsInBlock();
 		
 		Lop lpmInput = pmInput.constructLops();
 		Hop nrow = null;
@@ -1247,29 +1237,19 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			//v = rowMaxIndex(t(pm)) * rowMax(t(pm)) 
 			ReorgOp transpose = HopRewriteUtils.createTranspose(pmInput);
 			transpose.setForcedExecType(ExecType.MR);
-			HopRewriteUtils.copyLineNumbers(this, transpose);	
 			
-			AggUnaryOp agg1 = new AggUnaryOp("tmp2a", DataType.MATRIX, ValueType.DOUBLE, AggOp.MAXINDEX, Direction.Row, transpose);
-			HopRewriteUtils.setOutputBlocksizes(agg1, brlen, bclen);
-			agg1.refreshSizeInformation();
+			AggUnaryOp agg1 = HopRewriteUtils.createAggUnaryOp(transpose, AggOp.MAXINDEX, Direction.Row);
 			agg1.setForcedExecType(ExecType.MR);
-			HopRewriteUtils.copyLineNumbers(this, agg1);
 			
-			AggUnaryOp agg2 = new AggUnaryOp("tmp2b", DataType.MATRIX, ValueType.DOUBLE, AggOp.MAX, Direction.Row, transpose);
-			HopRewriteUtils.setOutputBlocksizes(agg2, brlen, bclen);
-			agg2.refreshSizeInformation();
+			AggUnaryOp agg2 = HopRewriteUtils.createAggUnaryOp(transpose, AggOp.MAX, Direction.Row);
 			agg2.setForcedExecType(ExecType.MR);
-			HopRewriteUtils.copyLineNumbers(this, agg2);
 			
-			BinaryOp mult = new BinaryOp("tmp3", DataType.MATRIX, ValueType.DOUBLE, OpOp2.MULT, agg1, agg2);
-			HopRewriteUtils.setOutputBlocksizes(mult, brlen, bclen); 
-			mult.refreshSizeInformation();
+			BinaryOp mult = HopRewriteUtils.createBinary(agg1, agg2, OpOp2.MULT);
 			mult.setForcedExecType(ExecType.MR);
-			HopRewriteUtils.copyLineNumbers(this, mult);
 			
 			//compute NROW target via nrow(m)
 			nrow = HopRewriteUtils.createValueHop(pmInput, true);
-			HopRewriteUtils.setOutputBlocksizes(nrow, 0, 0);
+			nrow.setOutputBlocksizes(0, 0);
 			nrow.setForcedExecType(ExecType.CP);
 			HopRewriteUtils.copyLineNumbers(this, nrow);
 				
@@ -1280,7 +1260,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		{
 			//compute NROW target via max(v)
 			nrow = HopRewriteUtils.createAggUnaryOp(pmInput, AggOp.MAX, Direction.RowCol); 
-			HopRewriteUtils.setOutputBlocksizes(nrow, 0, 0);
+			nrow.setOutputBlocksizes(0, 0);
 			nrow.setForcedExecType(etVect);
 			HopRewriteUtils.copyLineNumbers(this, nrow);
 		}
@@ -1338,7 +1318,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		//even a ba in CP does not imply that both transposes can be executed in CP)
 		if( CP ) //in-memory ba 
 		{
-			if( h1 instanceof ReorgOp && ((ReorgOp)h1).getOp()==ReOrgOp.TRANSPOSE )
+			if( HopRewriteUtils.isTransposeOperation(h1) )
 			{
 				long m = h1.getDim1();
 				long cd = h1.getDim2();
@@ -1854,8 +1834,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		Hop input1 = getInput().get(0);
 		Hop input2 = getInput().get(1);
 		
-		if( isMatrixMultiply() )
-		{
+		if( isMatrixMultiply() ) {
 			setDim1(input1.getDim1());
 			setDim2(input2.getDim2());
 		}

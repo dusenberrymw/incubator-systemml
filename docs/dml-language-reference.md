@@ -639,7 +639,6 @@ The builtin function `sum` operates on a matrix (say A of dimensionality (m x n)
 
 Function | Description | Parameters | Example
 -------- | ----------- | ---------- | -------
-append() | Adds the second argument as additional columns to the first argument (note that the first argument is not over-written). Append is meant to be used in situations where one cannot use left-indexing. <br/> **NOTE: append() has been replaced by cbind(), so its use is discouraged.** | Input: (X &lt;matrix&gt;, Y &lt;matrix&gt;) <br/>Output: &lt;matrix&gt; <br/> X and Y are matrices (with possibly multiple columns), where the number of rows in X and Y must be the same. Output is a matrix with exactly the same number of rows as X and Y. Let n1 and n2 denote the number of columns of matrix X and Y, respectively. The returned matrix has n1+n2 columns, where the first n1 columns contain X and the last n2 columns contain Y. | A = matrix(1, rows=2,cols=5) <br/> B = matrix(1, rows=2,cols=3) <br/> C = append(A,B) <br/> print("Dimensions of C: " + nrow(C) + " X " + ncol(C)) <br/> The output of above example is: <br/> Dimensions of C: 2 X 8
 cbind() | Column-wise matrix concatenation. Concatenates the second matrix as additional columns to the first matrix | Input: (X &lt;matrix&gt;, Y &lt;matrix&gt;) <br/>Output: &lt;matrix&gt; <br/> X and Y are matrices, where the number of rows in X and the number of rows in Y are the same. | A = matrix(1, rows=2,cols=3) <br/> B = matrix(2, rows=2,cols=3) <br/> C = cbind(A,B) <br/> print("Dimensions of C: " + nrow(C) + " X " + ncol(C)) <br/> Output: <br/> Dimensions of C: 2 X 6
 matrix() | Matrix constructor (assigning all the cells to numeric literals). | Input: (&lt;init&gt;, rows=&lt;value&gt;, cols=&lt;value&gt;) <br/> init: numeric literal; <br/> rows/cols: number of rows/cols (expression) <br/> Output: matrix | # 10x10 matrix initialized to 0 <br/> A = matrix (0, rows=10, cols=10)
  | Matrix constructor (reshaping an existing matrix). | Input: (&lt;existing matrix&gt;, rows=&lt;value&gt;, cols=&lt;value&gt;, byrow=TRUE) <br/> Output: matrix | A = matrix (0, rows=10, cols=10) <br/> B = matrix (A, rows=100, cols=1)
@@ -835,7 +834,7 @@ sign() | Returns a matrix representing the signs of the input matrix elements, w
 Function | Description | Parameters | Example
 -------- | ----------- | ---------- | -------
 cholesky() | Computes the Cholesky decomposition of symmetric input matrix A | Input: (A &lt;matrix&gt;) <br/> Output: &lt;matrix&gt; | <span style="white-space: nowrap;">A = matrix("4 12 -16 12 37 -43</span> -16 -43 98", rows=3, cols=3) <br/> B = cholesky(A)<br/> Matrix B: [[2, 0, 0], [6, 1, 0], [-8, 5, 3]]
-diag() | Create diagonal matrix from (n x 1) or (1 x n) matrix, or take diagonal from square matrix | Input: (n x 1) or (1 x n) matrix, or (n x n) matrix <br/> Output: (n x n) matrix, or (n x 1) matrix | diag(X)
+diag() | Create diagonal matrix from (n x 1) matrix, or take diagonal from square matrix | Input: (n x 1) matrix, or (n x n) matrix <br/> Output: (n x n) matrix, or (n x 1) matrix | D = diag(matrix(1.0, rows=3, cols=1))<br/> E = diag(matrix(1.0, rows=3, cols=3))
 eigen() | Computes Eigen decomposition of input matrix A. The Eigen decomposition consists of two matrices V and w such that A = V %\*% diag(w) %\*% t(V). The columns of V are the eigenvectors of the original matrix A. And, the eigen values are given by w. <br/> It is important to note that this function can operate only on small-to-medium sized input matrix that can fit in the main memory. For larger matrices, an out-of-memory exception is raised. | Input : (A &lt;matrix&gt;) <br/> Output : [w &lt;(m x 1) matrix&gt;, V &lt;matrix&gt;] <br/> A is a square symmetric matrix with dimensions (m x m). This function returns two matrices w and V, where w is (m x 1) and V is of size (m x m). | [w, V] = eigen(A)
 lu() | Computes Pivoted LU decomposition of input matrix A. The LU decomposition consists of three matrices P, L, and U such that P %\*% A = L %\*% U, where P is a permutation matrix that is used to rearrange the rows in A before the decomposition can be computed. L is a lower-triangular matrix whereas U is an upper-triangular matrix. <br/> It is important to note that this function can operate only on small-to-medium sized input matrix that can fit in the main memory. For larger matrices, an out-of-memory exception is raised. | Input : (A &lt;matrix&gt;) <br/> Output : [&lt;matrix&gt;, &lt;matrix&gt;, &lt;matrix&gt;] <br/> A is a square matrix with dimensions m x m. This function returns three matrices P, L, and U, all of which are of size m x m. | [P, L, U] = lu(A)
 qr() | Computes QR decomposition of input matrix A using Householder reflectors. The QR decomposition of A consists of two matrices Q and R such that A = Q%\*%R where Q is an orthogonal matrix (i.e., Q%\*%t(Q) = t(Q)%\*%Q = I, identity matrix) and R is an upper triangular matrix. For efficiency purposes, this function returns the matrix of Householder reflector vectors H instead of Q (which is a large m x m potentially dense matrix). The Q matrix can be explicitly computed from H, if needed. In most applications of QR, one is interested in calculating Q %\*% B or t(Q) %\*% B – and, both can be computed directly using H instead of explicitly constructing the large Q matrix. <br/> It is important to note that this function can operate only on small-to-medium sized input matrix that can fit in the main memory. For larger matrices, an out-of-memory exception is raised. | Input : (A &lt;matrix&gt;) <br/> Output : [&lt;matrix&gt;, &lt;matrix&gt;] <br/> A is a (m x n) matrix, which can either be a square matrix (m=n) or a rectangular matrix (m != n). This function returns two matrices H and R of size (m x n) i.e., same size as of the input matrix A. | [H, R] = qr(A)
@@ -933,7 +932,8 @@ Below, we have examples of this matrix in the CSV, Matrix Market, IJV, and Binar
 	    "format": "csv",
 	    "header": false,
 	    "sep": ",",
-	    "description": { "author": "SystemML" }
+	    "author": "SystemML",
+	    "created": "2017-01-01 00:00:01 PST"
 	}
 </div>
 
@@ -965,7 +965,8 @@ Below, we have examples of this matrix in the CSV, Matrix Market, IJV, and Binar
 	    "cols": 3,
 	    "nnz": 6,
 	    "format": "text",
-	    "description": { "author": "SystemML" }
+	    "author": "SystemML",
+	    "created": "2017-01-01 00:00:01 PST"
 	}
 </div>
 
@@ -983,7 +984,8 @@ Below, we have examples of this matrix in the CSV, Matrix Market, IJV, and Binar
 	    "cols_in_block": 1000,
 	    "nnz": 6,
 	    "format": "binary",
-	    "description": { "author": "SystemML" }
+	    "author": "SystemML",
+	    "created": "2017-01-01 00:00:01 PST"
 	}
 </div>
 
@@ -992,12 +994,13 @@ Below, we have examples of this matrix in the CSV, Matrix Market, IJV, and Binar
 As another example, here we see the content of the MTD file `scalar.mtd` associated with a scalar data file `scalar`
 that contains the scalar value 2.0.
 
-    {
-        "data_type": "scalar",
-        "value_type": "double",
-        "format": "text",
-        "description": { "author": "SystemML" }
-    }
+	{
+	    "data_type": "scalar",
+	    "value_type": "double",
+	    "format": "text",
+	    "author": "SystemML",
+	    "created": "2017-01-01 00:00:01 PST"
+	}
 
 
 Metadata is represented as an MTD file that contains a single JSON object with the attributes described below.
@@ -1015,6 +1018,8 @@ Parameter Name | Description | Optional | Permissible values | Data type valid f
 `nnz` | Number of non-zero values | Yes | any integer &gt; `0` | `matrix`
 `format` | Data file format | Yes. Default value is `text` | `csv`, `mm`, `text`, `binary` | `matrix`, `scalar`. Formats `csv` and `mm` are applicable only to matrices
 `description` | Description of the data | Yes | Any valid JSON string or object | `matrix`, `scalar`
+`author` | User that created the metadata file, defaults to `SystemML` | N/A | N/A | N/A
+`created` | Date/time when metadata file was written | N/A | N/A | N/A
 
 
 In addition, when reading or writing CSV files, the metadata may contain one or more of the following five attributes.
@@ -1126,7 +1131,8 @@ Example content of `out/file.ijv.mtd`:
         "cols": 8,
         "nnz": 4,
         "format": "text",
-        "description": { "author": "SystemML" }
+        "author": "SystemML",
+        "created": "2017-01-01 00:00:01 PST"
     }
 
 Write `V` to `out/file` in `binary` format:
@@ -1144,7 +1150,8 @@ Example content of `out/file.mtd`:
         "rows_in_block": 1000,
         "cols_in_block": 1000,
         "format": "binary",
-        "description": { "author": "SystemML" }
+        "author": "SystemML",
+        "created": "2017-01-01 00:00:01 PST"
     }
 
 Write `V` to `n.csv` in `csv` format with column headers, `";"` as delimiter, and zero values are not written.
@@ -1162,7 +1169,8 @@ Example content of `n.csv.mtd`:
         "format": "csv",
         "header": true,
         "sep": ";",
-        "description": { "author": "SystemML" }
+        "author": "SystemML",
+        "created": "2017-01-01 00:00:01 PST"
     }
 
 Write `x` integer value to file `out/scalar_i`
@@ -1175,7 +1183,8 @@ Example content of `out/scalar_i.mtd`:
         "data_type": "scalar",
         "value_type": "int",
         "format": "text",
-        "description": { "author": "SystemML" }
+        "author": "SystemML",
+        "created": "2017-01-01 00:00:01 PST"
     }
 
 Unlike `read`, the `write` function does not need a constant string expression, so the following example will work:
@@ -1186,6 +1195,26 @@ Unlike `read`, the `write` function does not need a constant string expression, 
     file = "A" + i + ".mtx";
     write(A, dir + file, format="csv");
 
+The `description` parameter can be used to attach a description to the metadata:
+
+	A = matrix("1 2 3 4", rows=2, cols=2)
+	write(A, "mymatrix.csv", format="csv", description="my matrix")
+
+This will generate the following `mymatrix.csv.mtd` metadata file:
+
+	{
+	    "data_type": "matrix",
+	    "value_type": "double",
+	    "rows": 2,
+	    "cols": 2,
+	    "nnz": 4,
+	    "format": "csv",
+	    "header": false,
+	    "sep": ",",
+	    "description": "my matrix",
+	    "author": "SystemML",
+	    "created": "2017-01-01 00:00:01 PST"
+	}
 
 ### Data Pre-Processing Built-In Functions
 

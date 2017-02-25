@@ -16,21 +16,23 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.sysml.api.monitoring;
 
-import java.util.Comparator;
+package org.apache.sysml.runtime.compress.cocode;
+
 import java.util.HashMap;
+import java.util.List;
 
-public class InstructionComparator implements Comparator<String>{
+import org.apache.sysml.runtime.compress.cocode.PlanningCoCoder.GroupableColInfo;
 
-	HashMap<String, Long> instructionCreationTime;
-	public InstructionComparator(HashMap<String, Long> instructionCreationTime) {
-		this.instructionCreationTime = instructionCreationTime;
-	}
-	
-	@Override
-	public int compare(String o1, String o2) {
-		return instructionCreationTime.get(o1)
-			.compareTo(instructionCreationTime.get(o2));
-	}
+public abstract class ColumnGroupPartitioner 
+{
+	/**
+	 * Partitions a list of columns into a list of partitions that contains subsets of columns.
+	 * Note that this call must compute a complete and disjoint partitioning.
+	 * 
+	 * @param groupCols list of columns 
+	 * @param groupColsInfo list of column infos
+	 * @return list of partitions (where each partition is a list of columns)
+	 */
+	public abstract List<List<Integer>> partitionColumns(List<Integer> groupCols, HashMap<Integer, GroupableColInfo> groupColsInfo);
 }

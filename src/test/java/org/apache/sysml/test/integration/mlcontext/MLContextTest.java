@@ -53,7 +53,7 @@ import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
-import org.apache.spark.sql.SQLContext;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -513,13 +513,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_DOUBLES);
 
@@ -539,13 +539,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_DOUBLES);
 
@@ -565,14 +565,14 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_DOUBLES_WITH_INDEX);
 
@@ -592,14 +592,14 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_DOUBLES_WITH_INDEX);
 
@@ -619,14 +619,14 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_DOUBLES_WITH_INDEX);
 
@@ -646,14 +646,14 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_DOUBLES_WITH_INDEX);
 
@@ -673,12 +673,12 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Tuple2<Double, Vector>> javaRddTuple = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddTuple.map(new DoubleVectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR_WITH_INDEX);
 
@@ -698,16 +698,66 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Tuple2<Double, Vector>> javaRddTuple = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddTuple.map(new DoubleVectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR_WITH_INDEX);
 
-		Script script = dml("print('sum: ' + sum(M))").in("M", dataFrame, mm);
+		Script script = pydml("print('sum: ' + sum(M))").in("M", dataFrame, mm);
+		setExpectedStdOut("sum: 45.0");
+		ml.execute(script);
+	}
+
+	@Test
+	public void testDataFrameSumDMLMllibVectorWithIDColumn() {
+		System.out.println("MLContextTest - DataFrame sum DML, mllib vector with ID column");
+
+		List<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>> list = new ArrayList<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>>();
+		list.add(new Tuple2<Double, org.apache.spark.mllib.linalg.Vector>(1.0, org.apache.spark.mllib.linalg.Vectors.dense(1.0, 2.0, 3.0)));
+		list.add(new Tuple2<Double, org.apache.spark.mllib.linalg.Vector>(2.0, org.apache.spark.mllib.linalg.Vectors.dense(4.0, 5.0, 6.0)));
+		list.add(new Tuple2<Double, org.apache.spark.mllib.linalg.Vector>(3.0, org.apache.spark.mllib.linalg.Vectors.dense(7.0, 8.0, 9.0)));
+		JavaRDD<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>> javaRddTuple = sc.parallelize(list);
+
+		JavaRDD<Row> javaRddRow = javaRddTuple.map(new DoubleMllibVectorRow());
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
+		List<StructField> fields = new ArrayList<StructField>();
+		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
+		fields.add(DataTypes.createStructField("C1", new org.apache.spark.mllib.linalg.VectorUDT(), true));
+		StructType schema = DataTypes.createStructType(fields);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
+
+		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR_WITH_INDEX);
+
+		Script script = dml("print('sum: ' + sum(M));").in("M", dataFrame, mm);
+		setExpectedStdOut("sum: 45.0");
+		ml.execute(script);
+	}
+
+	@Test
+	public void testDataFrameSumPYDMLMllibVectorWithIDColumn() {
+		System.out.println("MLContextTest - DataFrame sum PYDML, mllib vector with ID column");
+
+		List<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>> list = new ArrayList<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>>();
+		list.add(new Tuple2<Double, org.apache.spark.mllib.linalg.Vector>(1.0, org.apache.spark.mllib.linalg.Vectors.dense(1.0, 2.0, 3.0)));
+		list.add(new Tuple2<Double, org.apache.spark.mllib.linalg.Vector>(2.0, org.apache.spark.mllib.linalg.Vectors.dense(4.0, 5.0, 6.0)));
+		list.add(new Tuple2<Double, org.apache.spark.mllib.linalg.Vector>(3.0, org.apache.spark.mllib.linalg.Vectors.dense(7.0, 8.0, 9.0)));
+		JavaRDD<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>> javaRddTuple = sc.parallelize(list);
+
+		JavaRDD<Row> javaRddRow = javaRddTuple.map(new DoubleMllibVectorRow());
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
+		List<StructField> fields = new ArrayList<StructField>();
+		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
+		fields.add(DataTypes.createStructField("C1", new org.apache.spark.mllib.linalg.VectorUDT(), true));
+		StructType schema = DataTypes.createStructType(fields);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
+
+		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR_WITH_INDEX);
+
+		Script script = pydml("print('sum: ' + sum(M))").in("M", dataFrame, mm);
 		setExpectedStdOut("sum: 45.0");
 		ml.execute(script);
 	}
@@ -723,11 +773,11 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Vector> javaRddVector = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddVector.map(new VectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR);
 
@@ -747,15 +797,63 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Vector> javaRddVector = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddVector.map(new VectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR);
 
-		Script script = dml("print('sum: ' + sum(M))").in("M", dataFrame, mm);
+		Script script = pydml("print('sum: ' + sum(M))").in("M", dataFrame, mm);
+		setExpectedStdOut("sum: 45.0");
+		ml.execute(script);
+	}
+
+	@Test
+	public void testDataFrameSumDMLMllibVectorWithNoIDColumn() {
+		System.out.println("MLContextTest - DataFrame sum DML, mllib vector with no ID column");
+
+		List<org.apache.spark.mllib.linalg.Vector> list = new ArrayList<org.apache.spark.mllib.linalg.Vector>();
+		list.add(org.apache.spark.mllib.linalg.Vectors.dense(1.0, 2.0, 3.0));
+		list.add(org.apache.spark.mllib.linalg.Vectors.dense(4.0, 5.0, 6.0));
+		list.add(org.apache.spark.mllib.linalg.Vectors.dense(7.0, 8.0, 9.0));
+		JavaRDD<org.apache.spark.mllib.linalg.Vector> javaRddVector = sc.parallelize(list);
+
+		JavaRDD<Row> javaRddRow = javaRddVector.map(new MllibVectorRow());
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
+		List<StructField> fields = new ArrayList<StructField>();
+		fields.add(DataTypes.createStructField("C1", new org.apache.spark.mllib.linalg.VectorUDT(), true));
+		StructType schema = DataTypes.createStructType(fields);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
+
+		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR);
+
+		Script script = dml("print('sum: ' + sum(M));").in("M", dataFrame, mm);
+		setExpectedStdOut("sum: 45.0");
+		ml.execute(script);
+	}
+
+	@Test
+	public void testDataFrameSumPYDMLMllibVectorWithNoIDColumn() {
+		System.out.println("MLContextTest - DataFrame sum PYDML, mllib vector with no ID column");
+
+		List<org.apache.spark.mllib.linalg.Vector> list = new ArrayList<org.apache.spark.mllib.linalg.Vector>();
+		list.add(org.apache.spark.mllib.linalg.Vectors.dense(1.0, 2.0, 3.0));
+		list.add(org.apache.spark.mllib.linalg.Vectors.dense(4.0, 5.0, 6.0));
+		list.add(org.apache.spark.mllib.linalg.Vectors.dense(7.0, 8.0, 9.0));
+		JavaRDD<org.apache.spark.mllib.linalg.Vector> javaRddVector = sc.parallelize(list);
+
+		JavaRDD<Row> javaRddRow = javaRddVector.map(new MllibVectorRow());
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
+		List<StructField> fields = new ArrayList<StructField>();
+		fields.add(DataTypes.createStructField("C1", new org.apache.spark.mllib.linalg.VectorUDT(), true));
+		StructType schema = DataTypes.createStructType(fields);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
+
+		MatrixMetadata mm = new MatrixMetadata(MatrixFormat.DF_VECTOR);
+
+		Script script = pydml("print('sum: ' + sum(M))").in("M", dataFrame, mm);
 		setExpectedStdOut("sum: 45.0");
 		ml.execute(script);
 	}
@@ -771,11 +869,31 @@ public class MLContextTest extends AutomatedTestBase {
 		}
 	}
 
+	static class DoubleMllibVectorRow implements Function<Tuple2<Double, org.apache.spark.mllib.linalg.Vector>, Row> {
+		private static final long serialVersionUID = -3121178154451876165L;
+
+		@Override
+		public Row call(Tuple2<Double, org.apache.spark.mllib.linalg.Vector> tup) throws Exception {
+			Double doub = tup._1();
+			org.apache.spark.mllib.linalg.Vector vect = tup._2();
+			return RowFactory.create(doub, vect);
+		}
+	}
+
 	static class VectorRow implements Function<Vector, Row> {
 		private static final long serialVersionUID = 7077761802433569068L;
 
 		@Override
 		public Row call(Vector vect) throws Exception {
+			return RowFactory.create(vect);
+		}
+	}
+
+	static class MllibVectorRow implements Function<org.apache.spark.mllib.linalg.Vector, Row> {
+		private static final long serialVersionUID = -408929813562996706L;
+
+		@Override
+		public Row call(org.apache.spark.mllib.linalg.Vector vect) throws Exception {
 			return RowFactory.create(vect);
 		}
 	}
@@ -1559,13 +1677,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.StringType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.StringType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.StringType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		BinaryBlockMatrix binaryBlockMatrix = new BinaryBlockMatrix(dataFrame);
 		Script script = dml("avg = avg(M);").in("M", binaryBlockMatrix).out("avg");
@@ -1584,13 +1702,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.StringType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.StringType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.StringType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		BinaryBlockMatrix binaryBlockMatrix = new BinaryBlockMatrix(dataFrame);
 		Script script = pydml("avg = avg(M)").in("M", binaryBlockMatrix).out("avg");
@@ -1853,13 +1971,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(3, 3, 9);
 
@@ -1879,13 +1997,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		MatrixMetadata mm = new MatrixMetadata(3, 3, 9);
 
@@ -2069,13 +2187,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = dml("print('sum: ' + sum(M));").in("M", dataFrame);
 		setExpectedStdOut("sum: 27.0");
@@ -2093,13 +2211,13 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = pydml("print('sum: ' + sum(M))").in("M", dataFrame);
 		setExpectedStdOut("sum: 27.0");
@@ -2117,14 +2235,14 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = dml("print('sum: ' + sum(M));").in("M", dataFrame);
 		setExpectedStdOut("sum: 27.0");
@@ -2142,14 +2260,14 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<String> javaRddString = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddString.map(new CommaSeparatedValueStringToDoubleArrayRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C2", DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C3", DataTypes.DoubleType, true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = pydml("print('sum: ' + sum(M))").in("M", dataFrame);
 		setExpectedStdOut("sum: 27.0");
@@ -2167,12 +2285,12 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Tuple2<Double, Vector>> javaRddTuple = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddTuple.map(new DoubleVectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = dml("print('sum: ' + sum(M));").in("M", dataFrame);
 		setExpectedStdOut("sum: 45.0");
@@ -2190,12 +2308,12 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Tuple2<Double, Vector>> javaRddTuple = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddTuple.map(new DoubleVectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField(RDDConverterUtils.DF_ID_COLUMN, DataTypes.DoubleType, true));
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = dml("print('sum: ' + sum(M))").in("M", dataFrame);
 		setExpectedStdOut("sum: 45.0");
@@ -2213,11 +2331,11 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Vector> javaRddVector = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddVector.map(new VectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = dml("print('sum: ' + sum(M));").in("M", dataFrame);
 		setExpectedStdOut("sum: 45.0");
@@ -2235,11 +2353,11 @@ public class MLContextTest extends AutomatedTestBase {
 		JavaRDD<Vector> javaRddVector = sc.parallelize(list);
 
 		JavaRDD<Row> javaRddRow = javaRddVector.map(new VectorRow());
-		SQLContext sqlContext = new SQLContext(sc);
+		SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
 		List<StructField> fields = new ArrayList<StructField>();
 		fields.add(DataTypes.createStructField("C1", new VectorUDT(), true));
 		StructType schema = DataTypes.createStructType(fields);
-		Dataset<Row> dataFrame = sqlContext.createDataFrame(javaRddRow, schema);
+		Dataset<Row> dataFrame = sparkSession.createDataFrame(javaRddRow, schema);
 
 		Script script = dml("print('sum: ' + sum(M))").in("M", dataFrame);
 		setExpectedStdOut("sum: 45.0");
@@ -2524,6 +2642,26 @@ public class MLContextTest extends AutomatedTestBase {
 		String s = "print('x + y = ' + (x + y))";
 		Script script = pydml(s).in("x", 3L).in("y", 4L);
 		setExpectedStdOut("x + y = 7");
+		ml.execute(script);
+	}
+
+	@Test
+	public void testInputVariablesAddFloatsDML() {
+		System.out.println("MLContextTest - input variables add floats DML");
+
+		String s = "print('x + y = ' + (x + y));";
+		Script script = dml(s).in("x", 3F).in("y", 4F);
+		setExpectedStdOut("x + y = 7.0");
+		ml.execute(script);
+	}
+
+	@Test
+	public void testInputVariablesAddFloatsPYDML() {
+		System.out.println("MLContextTest - input variables add floats PYDML");
+
+		String s = "print('x + y = ' + (x + y))";
+		Script script = pydml(s).in("x", 3F).in("y", 4F);
+		setExpectedStdOut("x + y = 7.0");
 		ml.execute(script);
 	}
 

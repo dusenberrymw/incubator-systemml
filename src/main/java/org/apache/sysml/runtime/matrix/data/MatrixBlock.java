@@ -33,7 +33,6 @@ import java.util.Iterator;
 
 import org.apache.commons.math3.random.Well1024a;
 import org.apache.hadoop.io.DataInputBuffer;
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.Hop.OpOp2;
 import org.apache.sysml.hops.OptimizerUtils;
@@ -60,7 +59,6 @@ import org.apache.sysml.runtime.functionobjects.RevIndex;
 import org.apache.sysml.runtime.functionobjects.SortIndex;
 import org.apache.sysml.runtime.functionobjects.SwapIndex;
 import org.apache.sysml.runtime.instructions.cp.CM_COV_Object;
-import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.KahanObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -69,6 +67,7 @@ import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.matrix.operators.AggregateBinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
+import org.apache.sysml.runtime.matrix.operators.AggregateTernaryOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.CMOperator;
@@ -92,9 +91,9 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	private static final long serialVersionUID = 7319972089143154056L;
 	
 	//sparsity nnz threshold, based on practical experiments on space consumption and performance
-	private static final double SPARSITY_TURN_POINT = 0.4;
+	public static final double SPARSITY_TURN_POINT = 0.4;
 	//sparsity threshold for ultra-sparse matrix operations (40nnz in a 1kx1k block)
-	private static final double ULTRA_SPARSITY_TURN_POINT = 0.00004; 
+	public static final double ULTRA_SPARSITY_TURN_POINT = 0.00004; 
 	//default sparse block type: modified compressed sparse rows, for efficient incremental construction
 	public static final SparseBlock.Type DEFAULT_SPARSEBLOCK = SparseBlock.Type.MCSR;
 	//default sparse block type for update in place: compressed sparse rows, to prevent serialization
@@ -183,18 +182,6 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	////////
 	// Initialization methods
 	// (reset, init, allocate, etc)
-	
-	public static double getSparsityTurnPoint() {
-		if(DMLScript.DISABLE_SPARSE)
-			return 1e-6;
-		return SPARSITY_TURN_POINT;
-	}
-	
-	public static double getUltraSparsityTurnPoint() {
-		if(DMLScript.DISABLE_SPARSE)
-			return 1e-9;
-		return ULTRA_SPARSITY_TURN_POINT;
-	}
 	
 	@Override
 	public void reset() {
@@ -695,7 +682,11 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		}
 	}
 
-	public void appendToSparse( MatrixBlock that, int rowoffset, int coloffset ) 
+	public void appendToSparse( MatrixBlock that, int rowoffset, int coloffset ) {
+		appendToSparse(that, rowoffset, coloffset, true);
+	}
+	
+	public void appendToSparse( MatrixBlock that, int rowoffset, int coloffset, boolean deep ) 
 	{
 		if( that==null || that.isEmptyBlock(false) )
 			return; //nothing to append
@@ -713,7 +704,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 					
 				//single block append (avoid re-allocations)
 				if( sparseBlock.isEmpty(aix) && coloffset==0 ) { 
-					sparseBlock.set(aix, b.get(i), true);
+					sparseBlock.set(aix, b.get(i), deep);
 				}
 				else { //general case
 					int pos = b.pos(i);
@@ -900,7 +891,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	{
 		double sp = ((double)nonZeros/rlen)/clen;
 		//check for sparse representation in order to account for vectors in dense
-		return sparse && sp< getUltraSparsityTurnPoint() && nonZeros<40;
+		return sparse && sp<ULTRA_SPARSITY_TURN_POINT && nonZeros<40;
 	}
 
 	/**
@@ -1002,14 +993,10 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	 * @return true if matrix block shold be in sparse format in memory
 	 */
 	public static boolean evalSparseFormatInMemory( final long nrows, final long ncols, final long nnz )
-	{		
-//		// Extremely low getSparsityTurnPoint should disable sparse in most cases
-//		if(DMLScript.DISABLE_SPARSE)
-//			return false;
-		
+	{				
 		//evaluate sparsity threshold
 		double lsparsity = (double)nnz/nrows/ncols;
-		boolean lsparse = (lsparsity < getSparsityTurnPoint());
+		boolean lsparse = (lsparsity < SPARSITY_TURN_POINT);
 		
 		//compare size of sparse and dense representation in order to prevent
 		//that the sparse size exceed the dense size since we use the dense size
@@ -1034,7 +1021,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	{
 		//evaluate sparsity threshold
 		double lsparsity = ((double)nnz/nrows)/ncols;
-		boolean lsparse = (lsparsity < getSparsityTurnPoint());
+		boolean lsparse = (lsparsity < SPARSITY_TURN_POINT);
 		
 		double sizeUltraSparse = estimateSizeUltraSparseOnDisk( nrows, ncols, nnz );
 		double sizeSparse = estimateSizeSparseOnDisk(nrows, ncols, nnz);
@@ -4843,11 +4830,18 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		throws DMLRuntimeException 
 	{
 		double sum_wt = 0;
-		for (int i=0; i < getNumRows(); i++ )
-			sum_wt += quickGetValue(i, 1);
-		if ( Math.floor(sum_wt) < sum_wt ) {
-			throw new DMLRuntimeException("Unexpected error while computing quantile -- weights must be integers.");
+		for (int i=0; i < getNumRows(); i++ ) {
+			double tmp = quickGetValue(i, 1);
+			sum_wt += tmp;		
+			
+			// test all values not just final sum_wt to ensure that non-integer weights
+			// don't cancel each other out; integer weights are required by all quantiles, etc
+			if( Math.floor(tmp) < tmp ) {
+				throw new DMLRuntimeException("Wrong input data, quantile weights "
+						+ "are expected to be integers but found '"+tmp+"'.");
+			}
 		}
+		
 		return sum_wt;
 	}
 
@@ -4892,7 +4886,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		return ret;
 	}
 
-	public ScalarObject aggregateTernaryOperations(MatrixBlock m1, MatrixBlock m2, MatrixBlock m3, AggregateBinaryOperator op) 
+	public MatrixBlock aggregateTernaryOperations(MatrixBlock m1, MatrixBlock m2, MatrixBlock m3, MatrixBlock ret, AggregateTernaryOperator op, boolean inCP) 
 		throws DMLRuntimeException
 	{
 		//check input dimensions and operators
@@ -4901,15 +4895,23 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		if( !( op.aggOp.increOp.fn instanceof KahanPlus && op.binaryFn instanceof Multiply) )
 			throw new DMLRuntimeException("Unsupported operator for aggregate tertiary operations.");
 		
-		//execute ternary aggregate function
-		double val = -1;
-		if( op.getNumThreads() > 1 )
-			val = LibMatrixAgg.aggregateTernary(m1, m2, m3, op.getNumThreads());
+		//create output matrix block w/ corrections
+		int rl = (op.indexFn instanceof ReduceRow) ? 2 : 1;
+		int cl = (op.indexFn instanceof ReduceRow) ? m1.clen : 2;
+		if( ret == null )
+			ret = new MatrixBlock(rl, cl, false);
 		else
-			val = LibMatrixAgg.aggregateTernary(m1, m2, m3);
+			ret.reset(rl, cl, false);
+				
+		//execute ternary aggregate function
+		if( op.getNumThreads() > 1 )
+			ret = LibMatrixAgg.aggregateTernary(m1, m2, m3, ret, op, op.getNumThreads());
+		else
+			ret = LibMatrixAgg.aggregateTernary(m1, m2, m3, ret, op);
 		
-		//create output
-		return new DoubleObject(val);
+		if(op.aggOp.correctionExists && inCP)
+			ret.dropLastRowsOrColums(op.aggOp.correctionLocation);
+		return ret;
 	}
 
 	public MatrixBlock  uaggouterchainOperations(MatrixBlock mbLeft, MatrixBlock mbRight, MatrixBlock mbOut, BinaryOperator bOp, AggregateUnaryOperator uaggOp) 

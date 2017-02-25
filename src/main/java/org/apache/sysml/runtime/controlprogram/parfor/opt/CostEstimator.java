@@ -27,7 +27,6 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptNode.ParamType;
-import org.apache.sysml.runtime.controlprogram.parfor.opt.PerfTestTool.TestMeasure;
 
 /**
  * Base class for all potential cost estimators
@@ -36,18 +35,27 @@ import org.apache.sysml.runtime.controlprogram.parfor.opt.PerfTestTool.TestMeasu
  * 
  */
 public abstract class CostEstimator 
-{
-	
+{	
 	protected static final Log LOG = LogFactory.getLog(CostEstimator.class.getName());
-    
-	
+    	
 	//default parameters
 	public static final double DEFAULT_EST_PARALLELISM = 1.0; //default degree of parallelism: serial
 	public static final long   FACTOR_NUM_ITERATIONS   = 10; //default problem size
 	public static final double DEFAULT_TIME_ESTIMATE   = 5;  //default execution time: 5ms
 	public static final double DEFAULT_MEM_ESTIMATE_CP = 1024; //default memory consumption: 1KB 
-	public static final double DEFAULT_MEM_ESTIMATE_MR = 10*1024*1024; //default memory consumption: 20MB // TODO investigate unused constant
+	public static final double DEFAULT_MEM_ESTIMATE_MR = 20*1024*1024; //default memory consumption: 20MB 
+
+	public enum TestMeasure {
+		EXEC_TIME,
+		MEMORY_USAGE	
+	}
 	
+	public enum DataFormat {
+		DENSE,
+		SPARSE
+	}
+	
+	protected boolean _inclCondPart = false;
 	
 	/**
 	 * Main leaf node estimation method - to be overwritten by specific cost estimators
@@ -82,6 +90,7 @@ public abstract class CostEstimator
 	 * 
 	 * @param measure ?
 	 * @param node internal representation of a plan alternative for program blocks and instructions
+	 * @param inclCondPart including conditional partitioning
 	 * @return estimate?
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
@@ -91,13 +100,26 @@ public abstract class CostEstimator
 		return getEstimate(measure, node, null);
 	}
 	
+	public double getEstimate( TestMeasure measure, OptNode node, boolean inclCondPart ) 
+		throws DMLRuntimeException
+	{
+		//temporarily change local flag and get estimate
+		boolean oldInclCondPart = _inclCondPart;
+		_inclCondPart = inclCondPart; 
+		double val = getEstimate(measure, node, null);
+		
+		//reset local flag and return
+		_inclCondPart = oldInclCondPart;
+		return val;
+	}
+	
 	/**
 	 * Main estimation method.
 	 * 
-	 * @param measure ?
-	 * @param node internal representation of a plan alternative for program blocks and instructions
+	 * @param measure estimate type (time or memory)
+	 * @param node plan opt tree node
 	 * @param et execution type
-	 * @return estimate?
+	 * @return estimate
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public double getEstimate( TestMeasure measure, OptNode node, ExecType et ) 
@@ -107,7 +129,9 @@ public abstract class CostEstimator
 		
 		if( node.isLeaf() )
 		{
-			if( et != null )
+			if( _inclCondPart && node.getParam(ParamType.DATA_PARTITION_COND_MEM) != null )
+				val = Double.parseDouble(node.getParam(ParamType.DATA_PARTITION_COND_MEM));
+			else if( et != null )
 				val = getLeafNodeEstimate(measure, node, et); //forced type
 			else 
 				val = getLeafNodeEstimate(measure, node); //default	
@@ -178,17 +202,12 @@ public abstract class CostEstimator
 		return val;
 	}
 
-	protected double getDefaultEstimate(TestMeasure measure) 
-	{
-		double val = -1;
-		
-		switch( measure )
-		{
-			case EXEC_TIME: val = DEFAULT_TIME_ESTIMATE; break;
-			case MEMORY_USAGE: val = DEFAULT_MEM_ESTIMATE_CP; break;
-		}
-		
-		return val;
+	protected double getDefaultEstimate(TestMeasure measure)  {
+		switch( measure ) {
+			case EXEC_TIME:    return DEFAULT_TIME_ESTIMATE;
+			case MEMORY_USAGE: return DEFAULT_MEM_ESTIMATE_CP;
+		}		
+		return -1;
 	}
 
 	protected double getMaxEstimate( TestMeasure measure, ArrayList<OptNode> nodes, ExecType et ) 
@@ -196,11 +215,7 @@ public abstract class CostEstimator
 	{
 		double max = Double.MIN_VALUE; //smallest positive value
 		for( OptNode n : nodes )
-		{
-			double tmp = getEstimate( measure, n, et );
-			if( tmp > max )
-				max = tmp;
-		}
+			max = Math.max(max, getEstimate(measure, n, et));
 		return max;
 	}
 

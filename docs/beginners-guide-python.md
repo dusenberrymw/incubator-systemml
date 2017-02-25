@@ -71,8 +71,23 @@ brew install apache-spark16
 
 ### Install SystemML
 
-We are working towards uploading the python package on PyPi. Until then, please use following
-commands: 
+To install released SystemML, please use following commands:
+
+<div class="codetabs">
+<div data-lang="Python 2" markdown="1">
+```bash
+pip install systemml
+```
+</div>
+<div data-lang="Python 3" markdown="1">
+```bash
+pip3 install systemml
+```
+</div>
+</div>
+
+
+If you want to try out the bleeding edge version, please use following commands: 
 
 <div class="codetabs">
 <div data-lang="Python 2" markdown="1">
@@ -213,7 +228,7 @@ X_test = diabetes_X[-20:]
 y_train = diabetes.target[:-20]
 y_test = diabetes.target[-20:]
 # Create linear regression object
-regr = LinearRegression(sqlCtx, fit_intercept=True, C=1, solver='direct-solve')
+regr = LinearRegression(sqlCtx, fit_intercept=True, C=float("inf"), solver='direct-solve')
 # Train the model using the training sets
 regr.fit(X_train, y_train)
 y_predicted = regr.predict(X_test)

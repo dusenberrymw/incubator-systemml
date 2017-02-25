@@ -23,8 +23,7 @@ import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SQLContext;
-import org.junit.Test;
+import org.apache.spark.sql.SparkSession;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.ConfigurationManager;
@@ -40,6 +39,7 @@ import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
+import org.junit.Test;
 
 
 public class DataFrameRowFrameConversionTest extends AutomatedTestBase 
@@ -48,9 +48,9 @@ public class DataFrameRowFrameConversionTest extends AutomatedTestBase
 	private final static String TEST_NAME = "DataFrameConversion";
 	private final static String TEST_CLASS_DIR = TEST_DIR + DataFrameRowFrameConversionTest.class.getSimpleName() + "/";
 
-	private final static int  rows1 = 2245;
-	private final static int  cols1 = 745;
-	private final static int  cols2 = 1264;
+	private final static int  rows1 = 1045;
+	private final static int  cols1 = 545;
+	private final static int  cols2 = 864;
 	private final static double sparsity1 = 0.9;
 	private final static double sparsity2 = 0.1;
 	private final static double eps=0.0000000001;
@@ -216,13 +216,16 @@ public class DataFrameRowFrameConversionTest extends AutomatedTestBase
 			//setup spark context
 			sec = (SparkExecutionContext) ExecutionContextFactory.createContext();		
 			JavaSparkContext sc = sec.getSparkContext();
-			SQLContext sqlctx = new SQLContext(sc);
-			
+			SparkSession sparkSession = SparkSession.builder().sparkContext(sc.sc()).getOrCreate();
+
+			sc.getConf().set("spark.memory.offHeap.enabled", "false");
+			sparkSession.conf().set("spark.sql.codegen.wholeStage", "false");
+
 			//get binary block input rdd
 			JavaPairRDD<Long,FrameBlock> in = SparkExecutionContext.toFrameJavaPairRDD(sc, fbA);
 			
 			//frame - dataframe - frame conversion
-			Dataset<Row> df = FrameRDDConverterUtils.binaryBlockToDataFrame(sqlctx, in, mc1, schema);
+			Dataset<Row> df = FrameRDDConverterUtils.binaryBlockToDataFrame(sparkSession, in, mc1, schema);
 			JavaPairRDD<Long,FrameBlock> out = FrameRDDConverterUtils.dataFrameToBinaryBlock(sc, df, mc2, true);
 			
 			//get output frame block

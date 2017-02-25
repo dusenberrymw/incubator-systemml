@@ -36,15 +36,16 @@ import numpy as np
 from pyspark.context import SparkContext
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import HashingTF, Tokenizer
-from pyspark.sql import SQLContext
+from pyspark.sql import SparkSession
 from sklearn import datasets, metrics, neighbors
 from sklearn.datasets import fetch_20newsgroups
 from sklearn.feature_extraction.text import TfidfVectorizer
-
+from sklearn import linear_model
+from sklearn.metrics import accuracy_score, r2_score
 from systemml.mllearn import LinearRegression, LogisticRegression, NaiveBayes, SVM
 
 sc = SparkContext()
-sqlCtx = SQLContext(sc)
+sparkSession = SparkSession.builder.getOrCreate()
 
 # Currently not integrated with JUnit test
 # ~/spark-1.6.1-scala-2.11/bin/spark-submit --master local[*] --driver-class-path SystemML.jar test.py
@@ -60,21 +61,41 @@ class TestMLLearn(unittest.TestCase):
         X_test = X_digits[int(.9 * n_samples):]
         y_test = y_digits[int(.9 * n_samples):]
         # Convert to DataFrame for i/o: current way to transfer data
-        logistic = LogisticRegression(sqlCtx, transferUsingDF=True)
-        score = logistic.fit(X_train, y_train).score(X_test, y_test)
-        self.failUnless(score > 0.9)
+        logistic = LogisticRegression(sparkSession, transferUsingDF=True)
+        logistic.fit(X_train, y_train)
+        mllearn_predicted = logistic.predict(X_test)
+        sklearn_logistic = linear_model.LogisticRegression()
+        sklearn_logistic.fit(X_train, y_train)
+        self.failUnless(accuracy_score(sklearn_logistic.predict(X_test), mllearn_predicted) > 0.95) # We are comparable to a similar algorithm in scikit learn
 
-    def test_linear_regression_sk2(self):
+    def test_linear_regression(self):
         diabetes = datasets.load_diabetes()
         diabetes_X = diabetes.data[:, np.newaxis, 2]
         diabetes_X_train = diabetes_X[:-20]
         diabetes_X_test = diabetes_X[-20:]
         diabetes_y_train = diabetes.target[:-20]
         diabetes_y_test = diabetes.target[-20:]
-        regr = LinearRegression(sqlCtx, transferUsingDF=True)
+        regr = LinearRegression(sparkSession, solver='direct-solve', transferUsingDF=True)
         regr.fit(diabetes_X_train, diabetes_y_train)
-        score = regr.score(diabetes_X_test, diabetes_y_test)
-        self.failUnless(score > 0.4) # TODO: Improve r2-score (may be I am using it incorrectly)
+        mllearn_predicted = regr.predict(diabetes_X_test)
+        sklearn_regr = linear_model.LinearRegression()
+        sklearn_regr.fit(diabetes_X_train, diabetes_y_train)
+        self.failUnless(r2_score(sklearn_regr.predict(diabetes_X_test), mllearn_predicted) > 0.95) # We are comparable to a similar algorithm in scikit learn
+
+    def test_linear_regression_cg(self):
+        diabetes = datasets.load_diabetes()
+        diabetes_X = diabetes.data[:, np.newaxis, 2]
+        diabetes_X_train = diabetes_X[:-20]
+        diabetes_X_test = diabetes_X[-20:]
+        diabetes_y_train = diabetes.target[:-20]
+        diabetes_y_test = diabetes.target[-20:]
+        regr = LinearRegression(sparkSession, solver='newton-cg', transferUsingDF=True)
+        regr.fit(diabetes_X_train, diabetes_y_train)
+        mllearn_predicted = regr.predict(diabetes_X_test)
+        sklearn_regr = linear_model.LinearRegression()
+        sklearn_regr.fit(diabetes_X_train, diabetes_y_train)
+        self.failUnless(r2_score(sklearn_regr.predict(diabetes_X_test), mllearn_predicted) > 0.95) # We are comparable to a similar algorithm in scikit learn
+
 
     def test_svm_sk2(self):
         digits = datasets.load_digits()
@@ -85,23 +106,12 @@ class TestMLLearn(unittest.TestCase):
         y_train = y_digits[:int(.9 * n_samples)]
         X_test = X_digits[int(.9 * n_samples):]
         y_test = y_digits[int(.9 * n_samples):]
-        svm = SVM(sqlCtx, is_multi_class=True, transferUsingDF=True)
-        score = svm.fit(X_train, y_train).score(X_test, y_test)
-        self.failUnless(score > 0.9)
-
-    #def test_naive_bayes_sk2(self):
-    #    categories = ['alt.atheism', 'talk.religion.misc', 'comp.graphics', 'sci.space']
-    #    newsgroups_train = fetch_20newsgroups(subset='train', categories=categories)
-    #    newsgroups_test = fetch_20newsgroups(subset='test', categories=categories)
-    #    vectorizer = TfidfVectorizer()
-    #    # Both vectors and vectors_test are SciPy CSR matrix
-    #    vectors = vectorizer.fit_transform(newsgroups_train.data)
-    #    vectors_test = vectorizer.transform(newsgroups_test.data)
-    #    nb = NaiveBayes(sqlCtx)
-    #    nb.fit(vectors, newsgroups_train.target)
-    #    pred = nb.predict(vectors_test)
-    #    score = metrics.f1_score(newsgroups_test.target, pred, average='weighted')
-    #    self.failUnless(score > 0.8)
+        svm = SVM(sparkSession, is_multi_class=True, transferUsingDF=True)
+        mllearn_predicted = svm.fit(X_train, y_train).predict(X_test)
+        from sklearn import linear_model, svm
+        clf = svm.LinearSVC()
+        sklearn_predicted = clf.fit(X_train, y_train).predict(X_test)
+        self.failUnless(accuracy_score(sklearn_predicted, mllearn_predicted) > 0.95 )
 
 
 if __name__ == '__main__':
