@@ -49,7 +49,7 @@ def gen_class_weights(df):
   return class_weights
 
 
-def read_data(spark_session, filename_template, sample_size, channels, sample_prob=1, keep_class_distribution=True, seed=42):
+def read_data(spark_session, filename_template, sample_size, channels, sample_prob, normalize_class_distribution, seed):
   """Read and return training & validation Spark DataFrames."""
   # TODO: Clean this function up!!!
   assert channels in (1, 3)
@@ -65,12 +65,9 @@ def read_data(spark_session, filename_template, sample_size, channels, sample_pr
     except:  # Pre-sampled DataFrame not available
       filename = os.path.join("data", filename_template.format("", sample_size, "_grayscale" if grayscale else ""))
       df = spark_session.read.load(filename)
-      if keep_class_distribution:
-        # stratified sample maintaining the original class proportions
-        df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
-      else:
-        # stratified sample resulting in even class proportions
-        p = sample_prob  # sample percentage
+      p = sample_prob  # sample percentage
+      if normalize_class_distribution:
+        # stratified sample with even class proportions
         n = df.count()  # num examples
         K = 3  # num classes
         s = p * n  # num examples in p% sample, as a fraction
@@ -79,7 +76,9 @@ def read_data(spark_session, filename_template, sample_size, channels, sample_pr
         class_counts = {row["tumor_score"]:row["count"] for row in class_counts_df.collect()}
         ps = {k:s_k/v for k,v in class_counts.items()}
         df = df.sampleBy("tumor_score", fractions=ps, seed=seed)
-
+      else:
+        # stratified sample maintaining the original class proportions
+        df = df.sampleBy("tumor_score", fractions={1: p, 2: p, 3: p}, seed=seed)
       # TODO: Determine if coalesce actually provides a perf benefit on Spark 2.x
       #train_df.cache(), val_df.cache()  # cache here, or coalesce will hang
       # tc = train_df.count()
@@ -106,17 +105,17 @@ def read_data(spark_session, filename_template, sample_size, channels, sample_pr
   return df
 
 
-def read_train_data(spark_session, sample_size, channels, sample_prob=1, keep_class_distribution=True, seed=42):
+def read_train_data(spark_session, sample_size, channels, sample_prob=1, normalize_class_distribution=False, seed=42):
   """Read training Spark DataFrame."""
   filename = "train_{}{}{}.parquet"
-  train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
+  train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, normalize_class_distribution, seed)
   return train_df
 
 
-def read_val_data(spark_session, sample_size, channels, sample_prob=1, keep_class_distribution=True, seed=42):
+def read_val_data(spark_session, sample_size, channels, sample_prob=1, normalize_class_distribution=False, seed=42):
   """Read validation Spark DataFrame."""
   filename = "val_{}{}{}.parquet"
-  train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, seed)
+  train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, normalize_class_distribution, seed)
   return train_df
 
 
