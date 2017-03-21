@@ -236,7 +236,6 @@ public class LibMatrixDNN {
 	 * 
 	 * @param ret left and output matrix
 	 * @param elem array of right untransposed matrices (expected in dense format)
-	 * @param params convolution parameters
 	 * @throws DMLRuntimeException in case of unsupported inputs or output
 	 */
 	private static void elementWiseInPlaceTransposedAddition(MatrixBlock ret, MatrixBlock[] elem) 
@@ -434,15 +433,13 @@ public class LibMatrixDNN {
 		params.end_indexes_w = new int[params.Q];
 		for (int p = 0; p < params.P; p++) {
 			int start_index_h = p * params.stride_h - params.pad_h;
-			final int end_index_h = Math.min(start_index_h + params.R, params.H);
-			start_index_h = Math.max(start_index_h, 0);
+			int end_index_h = start_index_h + params.R;
 			params.start_indexes_h[p] = start_index_h;
 			params.end_indexes_h[p] = end_index_h;
 		}
 		for (int q = 0; q < params.Q; q++) {
-			int start_index_w = Math.max(q * params.stride_w - params.pad_w, 0);
-			int end_index_w = Math.min(start_index_w + params.S, params.W);
-			start_index_w = Math.max(start_index_w, 0);
+			int start_index_w = q * params.stride_w - params.pad_w;
+			int end_index_w = start_index_w + params.S;
 			params.start_indexes_w[q] = start_index_w;
 			params.end_indexes_w[q] = end_index_w;
 		}
@@ -831,7 +828,13 @@ public class LibMatrixDNN {
 					for (int q = 0; q < params.Q; q++, out_index++) {
 						for (int h = params.start_indexes_h[p]; h < params.end_indexes_h[p]; h++) {
 							for (int w = params.start_indexes_w[q]; w < params.end_indexes_w[q]; w++) {
-								outputArray[out_index] = Math.max(outputArray[out_index], inputArray[inOffset1 +  h*params.W + w]);
+								if (h < 0 || w < 0 || h >= params.H || w >= params.W) {
+									// zero-padded row or column
+									outputArray[out_index] = Math.max(outputArray[out_index], 0);
+								}
+								else {
+									outputArray[out_index] = Math.max(outputArray[out_index], inputArray[inOffset1 + h * params.W + w]);
+								}
 							}
 						}
 					}
