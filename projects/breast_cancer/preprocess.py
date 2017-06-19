@@ -69,7 +69,7 @@ num_partitions = 20000
 add_row_indices = True
 train_frac = 0.8
 split_seed = 24
-folder = "/home/MDM/breast_cancer/data"
+folder = "data"  #"/mnt/gfs1/TPAC"
 save_folder = "data"  # Hadoop-supported directory in which to save DataFrames
 df_path = os.path.join(save_folder, "samples_{}_{}{}.parquet".format(
     "labels" if training else "testing", sample_size, "_grayscale" if grayscale else ""))
@@ -145,4 +145,3 @@ train_sample_path = os.path.join(save_folder, tr_sample_filename)
 val_sample_path = os.path.join(save_folder, val_sample_filename)
 save(train_sample, train_sample_path, sample_size, grayscale)
 save(val_sample, val_sample_path, sample_size, grayscale)
-

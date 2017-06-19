@@ -13,7 +13,7 @@ import py4j
 
 # Utils for reading data
 
-def compute_channel_means(df, channels, size):
+def compute_channel_means(rdd, channels, size):
   """Compute the means of each color channel across the dataset."""
   # TODO: Replace this with pyspark.ml.feature.VectorSlicer
   # to cut vector into separate channel vectors, then grab the mean
@@ -34,7 +34,7 @@ def compute_channel_means(df, channels, size):
     mu = np.mean(x, axis=(0,1,2))
     return mu
 
-  means = df.rdd.map(helper).collect()
+  means = rdd.map(helper).collect()
   means = np.array(means)
   means = np.mean(means, axis=0)
   return means
@@ -107,14 +107,14 @@ def read_data(spark_session, filename_template, sample_size, channels, sample_pr
 
 def read_train_data(spark_session, sample_size, channels, sample_prob=1, normalize_class_distribution=False, seed=42):
   """Read training Spark DataFrame."""
-  filename = "train_{}{}{}.parquet"
+  filename = "train_{}{}{}_updated.parquet"
   train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, normalize_class_distribution, seed)
   return train_df
 
 
 def read_val_data(spark_session, sample_size, channels, sample_prob=1, normalize_class_distribution=False, seed=42):
   """Read validation Spark DataFrame."""
-  filename = "val_{}{}{}.parquet"
+  filename = "val_{}{}{}_updated.parquet"
   train_df = read_data(spark_session, filename, sample_size, channels, sample_prob, normalize_class_distribution, seed)
   return train_df
 

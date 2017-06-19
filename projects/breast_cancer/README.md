@@ -19,7 +19,7 @@ limitations under the License.
 
 # Predicting Breast Cancer Proliferation Scores with Apache Spark and Apache SystemML
 
-Note: This project is still a **work in progress**.
+Note: This project is still a **work in progress**.  There is also an [experimental branch](https://github.com/dusenberrymw/systemml/tree/breast_cancer_experimental2/projects/breast_cancer) with additional files and experiments.
 
 ## Overview
 The [Tumor Proliferation Assessment Challenge 2016 (TUPAC16)](http://tupac.tue-image.nl/) is a "Grand Challenge" that was created for the [2016 Medical Image Computing and Computer Assisted Intervention (MICCAI 2016)](http://miccai2016.org/en/) conference.  In this challenge, the goal is to develop state-of-the-art algorithms for automatic prediction of tumor proliferation scores from whole-slide histopathology images of breast tumors.
@@ -34,18 +34,20 @@ References:
 [4] http://emedicine.medscape.com/article/1947145-workup#c12
 
 ## Goal & Approach
-In an effort to automate the process of classification, this project aims to develop a large-scale deep learning approach for predicting tumor scores directly from the pixels of whole-slide histopathology images.  Our proposed approach is based on a recent research paper from Stanford [1].  Starting with 500 extremely high-resolution tumor slide images with accompanying score labels, we aim to make use of Apache Spark in a preprocessing step to cut and filter the images into smaller square samples, generating 4.7 million samples for a total of ~7TB of data [2].  We then utilize Apache SystemML on top of Spark to develop and train a custom, large-scale, deep convolutional neural network on these samples, making use of the familiar linear algebra syntax and automatically-distributed execution of SystemML [3].  Our model takes as input the pixel values of the individual samples, and is trained to predict the correct tumor score classification for each one.  In addition to distributed linear algebra, we aim to exploit task-parallelism via parallel for-loops for hyperparameter optimization, as well as hardware acceleration for faster training via a GPU-backed runtime.  Ultimately, we aim to develop a model that is sufficiently stronger than existing approaches for the task of breast cancer tumor proliferation score classification.
+In an effort to automate the process of classification, this project aims to develop a large-scale deep learning approach for predicting tumor scores directly from the pixels of whole-slide histopathology images.  Our proposed approach is based on a recent research paper from Stanford [1].  Starting with 500 extremely high-resolution tumor slide images with accompanying score labels, we aim to make use of Apache Spark in a preprocessing step to cut and filter the images into smaller square samples, generating 4.7 million samples for a total of ~7TB of data [2].  We then utilize Apache SystemML on top of Spark to develop and train a custom, large-scale, deep convolutional neural network on these samples, making use of the familiar linear algebra syntax and automatically-distributed execution of SystemML [3].  Our model takes as input the pixel values of the individual samples, and is trained to predict the correct tumor score classification for each one.  In addition to distributed linear algebra, we aim to exploit task-parallelism via parallel for-loops for hyperparameter optimization, as well as hardware acceleration for faster training via a GPU-backed runtime.  We also explore a hybrid setup of using Keras for model training (currently transfer learning by fine-tuning a modified ResNet50 model), and SystemML for distributed scoring of exported models [4].  Ultimately, we aim to develop a model that is sufficiently stronger than existing approaches for the task of breast cancer tumor proliferation score classification.
 
 References:
 [1] https://web.stanford.edu/group/rubinlab/pubs/2243353.pdf
-[2] See [`Preprocessing.ipynb`](Preprocessing.ipynb), and [`breastcancer/preprocessing.py`](breastcancer/preprocessing.py).
-[3] See [`MachineLearning.ipynb`](MachineLearning.ipynb), [`softmax_clf.dml`](softmax_clf.dml), and [`convnet.dml`](convnet.dml).
+[2] [`Preprocessing.ipynb`](Preprocessing.ipynb), [`preprocess.py`](preprocess.py), [`breastcancer/preprocessing.py`](breastcancer/preprocessing.py)
+[3] [`MachineLearning.ipynb`](MachineLearning.ipynb), [`softmax_clf.dml`](breastcancer/softmax_clf.dml), [`convnet.dml`](breastcancer/convnet.dml)
+[4] [`MachineLearning-Keras-ResNet50.ipynb`](MachineLearning-Keras-ResNet50.ipynb)
 
-![Approach](https://apache.github.io/systemml/img/projects/breast_cancer/approach.svg)
+![Approach](https://apache.github.io/incubator-systemml/img/projects/breast_cancer/approach.svg)
 
 ---
 
 ## Setup (*All nodes* unless other specified):
+* Spark 2.x (ideally bleeding-edge)
 * System Packages:
   * `sudo yum update`
   * `sudo yum install gcc ruby`
@@ -60,11 +62,14 @@ References:
   * `sudo yum install openslide`
 * Python packages:
   * `pip3 install -U matplotlib numpy pandas scipy jupyter ipython scikit-learn scikit-image flask openslide-python`
-* SystemML (only driver):
-  * `git clone https://github.com/apache/systemml.git`
-  * `cd systemml`
+* SystemML (bleeding-edge; only driver):
+  * `git clone https://github.com/apache/incubator-systemml.git`
+  * `cd incubator-systemml`
   * `mvn clean package`
   * `pip3 install -e src/main/python`
+* Keras (bleeding-edge; only driver):
+  * `pip3 install git+https://github.com/fchollet/keras.git`
+  * `pip3 install tensorflow-gpu` (or `pip3 install tensorflow` for CPU-only)
 * Add the following to the `data` folder (same location on *all* nodes):
   * `training_image_data` folder with the training slides.
   * `testing_image_data` folder with the testing slides.
@@ -72,12 +77,13 @@ References:
 * Layout:
   ```
   - MachineLearning.ipynb
+  - MachineLearning-Keras-ResNet50.ipynb
   - Preprocessing.ipynb
   - breastcancer/
+    - convnet.dml
+    - softmax_clf.dml
     - preprocessing.py
     - visualization.py
-  - convnet.dml
-  - nn/
   - ...
   - data/
     - training_ground_truth.csv
@@ -100,7 +106,7 @@ References:
     # Remove the max result size constraint.
     spark.driver.maxResultSize 0
     # Increase the message size.
-    spark.rpc.message.maxSize 128
+    spark.akka.frameSize 128
     # Extend the network timeout threshold.
     spark.network.timeout 1000s
     # Setup some extra Java options for performance.
@@ -117,14 +123,14 @@ References:
     spark.executor.memory 50g
     ```
 
-  * Machine Learning:
+  * Machine Learning (SystemML):
     ```
     # Use all executor memory for JVM
     spark.executor.memory 100g
     ```
 
 * `cd` to this `breast_cancer` folder.
-* Start Jupyter + PySpark with the following command (could also use Yarn in client mode with `--master yarn --deploy-mode`):
+* Start Jupyter + PySpark with the following command (could also use Yarn in client mode with `--master yarn --deploy-mode client`):
   ```
   PYSPARK_PYTHON=python3 PYSPARK_DRIVER_PYTHON=jupyter PYSPARK_DRIVER_PYTHON_OPTS="notebook" pyspark --master spark://MASTER_URL:7077 --driver-class-path $SYSTEMML_HOME/target/SystemML.jar --jars $SYSTEMML_HOME/target/SystemML.jar
   ```
@@ -136,4 +142,3 @@ References:
   - Host on server:
     - `python3 path/to/openslide-python/examples/deepzoom/deepzoom_multiserver.py -Q 100 -l HOSTING_URL_HERE path/to/data/`
     - Open local browser to `HOSTING_URL_HERE:5000`.
-
