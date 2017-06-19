@@ -117,16 +117,15 @@ public class SortMR
     private ArrayList<WritableComparable> readPartitions(FileSystem fs, Path p, JobConf job) 
     	throws IOException 
     {
-    	SequenceFile.Reader reader = new SequenceFile.Reader(fs, p, job);
     	ArrayList<WritableComparable> parts = new ArrayList<WritableComparable>();
+    	SequenceFile.Reader reader = null;
     	try 
     	{
-			//WritableComparable key = keyClass.newInstance();
-    		DoubleWritable key = new DoubleWritable();
+    		reader = new SequenceFile.Reader(fs, p, job);
+			DoubleWritable key = new DoubleWritable();
 			NullWritable value = NullWritable.get();
 			while (reader.next(key, value)) {
 				parts.add(key);
-				//key=keyClass.newInstance();
 				key = new DoubleWritable();
 			}
 		} 
@@ -137,21 +136,19 @@ public class SortMR
     		IOUtilFunctions.closeSilently(reader);
     	}
 		
-		reader.close();
 		return parts;
     }
 
-    public void configure(JobConf job) {
-      try {
-    	  FileSystem fs = FileSystem.get(job);
-          Path partFile = new Path(MRJobConfiguration.getSortPartitionFilename(job)); 
-          splitPoints = readPartitions(fs, partFile, job);
-        
-      } 
-      catch (IOException ie) {
-        throw new IllegalArgumentException("can't read paritions file", ie);
-      }
-    }
+	public void configure(JobConf job) {
+		try {
+			Path partFile = new Path(MRJobConfiguration.getSortPartitionFilename(job));
+			FileSystem fs = IOUtilFunctions.getFileSystem(partFile, job);
+			splitPoints = readPartitions(fs, partFile, job);
+		}
+		catch (IOException ie) {
+			throw new IllegalArgumentException("can't read paritions file", ie);
+		}
+	}
 
     public int getPartition(K key, V value, int numPartitions) {
       return findPartition(key)%numPartitions;

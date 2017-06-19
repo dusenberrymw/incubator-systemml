@@ -23,32 +23,29 @@ import org.apache.spark.api.java.JavaPairRDD;
 
 public class RDDObject extends LineageObject
 {
-
 	private JavaPairRDD<?,?> _rddHandle = null;
 	
 	//meta data on origin of given rdd handle
 	private boolean _checkpointed = false; //created via checkpoint instruction
 	private boolean _hdfsfile = false;     //created from hdfs file
 	private String  _hdfsFname = null;     //hdfs filename, if created from hdfs.  
+	private boolean _parRDD = false;       //is a parallelized rdd at driver
+	private boolean _pending = true;       //is a pending rdd operation
 	
-	public RDDObject( JavaPairRDD<?,?> rddvar, String varName)
-	{
+	public RDDObject( JavaPairRDD<?,?> rddvar, String varName) {
+		super(varName);
 		_rddHandle = rddvar;
-		_varName = varName;
 	}
 
-	public JavaPairRDD<?,?> getRDD()
-	{
+	public JavaPairRDD<?,?> getRDD() {
 		return _rddHandle;
 	}
 	
-	public void setCheckpointRDD( boolean flag )
-	{
+	public void setCheckpointRDD( boolean flag ) {
 		_checkpointed = flag;
 	}
 	
-	public boolean isCheckpointRDD() 
-	{
+	public boolean isCheckpointRDD() {
 		return _checkpointed;
 	}
 	
@@ -66,6 +63,22 @@ public class RDDObject extends LineageObject
 	
 	public String getHDFSFilename() {
 		return _hdfsFname;
+	}
+	
+	public void setParallelizedRDD( boolean flag ) {
+		_parRDD = flag;
+	}
+	
+	public boolean isParallelizedRDD() {
+		return _parRDD; 
+	}
+	
+	public void setPending(boolean flag) {
+		_pending = flag;
+	}
+	
+	public boolean isPending() {
+		return _pending;
 	}
 	
 

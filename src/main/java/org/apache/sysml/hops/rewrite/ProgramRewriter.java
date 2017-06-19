@@ -96,6 +96,8 @@ public class ProgramRewriter
 			_dagRuleSet.add(     new RewriteRemoveUnnecessaryCasts()             );		
 			if( OptimizerUtils.ALLOW_COMMON_SUBEXPRESSION_ELIMINATION )
 				_dagRuleSet.add( new RewriteCommonSubexpressionElimination()     );
+			if ( OptimizerUtils.ALLOW_SUM_PRODUCT_REWRITES)
+				_dagRuleSet.add( new RewriteElementwiseMultChainOptimization()   ); //dependency: cse
 			if( OptimizerUtils.ALLOW_CONSTANT_FOLDING )
 				_dagRuleSet.add( new RewriteConstantFolding()                    ); //dependency: cse
 			if( OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION )
@@ -142,13 +144,14 @@ public class ProgramRewriter
 	/**
 	 * Construct a program rewriter for a given rewrite which is passed from outside.
 	 * 
-	 * @param rewrite the HOP rewrite rule
+	 * @param rewrites the HOP rewrite rules
 	 */
-	public ProgramRewriter( HopRewriteRule rewrite )
+	public ProgramRewriter( HopRewriteRule... rewrites )
 	{
 		//initialize HOP DAG rewrite ruleSet (with fixed rewrite order)
 		_dagRuleSet = new ArrayList<HopRewriteRule>();
-		_dagRuleSet.add( rewrite );		
+		for( HopRewriteRule rewrite : rewrites )
+			_dagRuleSet.add( rewrite );		
 		
 		_sbRuleSet = new ArrayList<StatementBlockRewriteRule>();
 	}
@@ -156,15 +159,16 @@ public class ProgramRewriter
 	/**
 	 * Construct a program rewriter for a given rewrite which is passed from outside.
 	 * 
-	 * @param rewrite the statement block rewrite rule
+	 * @param rewrites the statement block rewrite rules
 	 */
-	public ProgramRewriter( StatementBlockRewriteRule rewrite )
+	public ProgramRewriter( StatementBlockRewriteRule... rewrites )
 	{
 		//initialize HOP DAG rewrite ruleSet (with fixed rewrite order)
 		_dagRuleSet = new ArrayList<HopRewriteRule>();
 		
 		_sbRuleSet = new ArrayList<StatementBlockRewriteRule>();
-		_sbRuleSet.add( rewrite );
+		for( StatementBlockRewriteRule rewrite : rewrites )
+			_sbRuleSet.add( rewrite );
 	}
 	
 	/**
@@ -258,18 +262,20 @@ public class ProgramRewriter
 	
 	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state) 
 		throws HopsException
-	{	
+	{
 		for( HopRewriteRule r : _dagRuleSet )
 		{
 			Hop.resetVisitStatus( roots ); //reset for each rule
 			roots = r.rewriteHopDAGs(roots, state);
 		
-			if( CHECK ) {		
-				LOG.info("Validation after: "+r.getClass().getName());
-				HopDagValidator.validateHopDag(roots);
-			}
+			if( CHECK )
+				try {
+					HopDagValidator.validateHopDag(roots);
+				} catch (HopsException e) {
+					LOG.error("Invalid hop after rewriting by " + r.getClass().getName(), e);
+					throw e;
+				}
 		}
-		
 		return roots;
 	}
 	
@@ -277,19 +283,21 @@ public class ProgramRewriter
 		throws HopsException
 	{	
 		if( root == null )
-			return root;
+			return null;
 		
 		for( HopRewriteRule r : _dagRuleSet )
 		{
 			root.resetVisitStatus(); //reset for each rule
 			root = r.rewriteHopDAG(root, state);
-		
-			if( CHECK ) {
-				LOG.info("Validation after: "+r.getClass().getName());
-				HopDagValidator.validateHopDag(root);
-			}
+
+			if( CHECK )
+				try {
+					HopDagValidator.validateHopDag(root);
+				} catch (HopsException e) {
+					LOG.error("Invalid hop after rewriting by " + r.getClass().getName(), e);
+					throw e;
+				}
 		}
-		
 		return root;
 	}
 	

@@ -39,6 +39,7 @@ import org.apache.hadoop.mapred.lib.NLineInputFormat;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.controlprogram.parfor.Task.TaskType;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 
 
 /**
@@ -80,14 +81,19 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 		//time.start();
 		
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(getPath(), job);
 		
 		//read task string
 		LongWritable key = new LongWritable();
 		Text value = new Text();
-		RecordReader<LongWritable,Text> reader = new NLineInputFormat().getRecordReader(this, job, Reporter.NULL);
-		reader.next(key, value);
-		reader.close();
+		RecordReader<LongWritable,Text> reader = null;
+		try {
+			reader = new NLineInputFormat().getRecordReader(this, job, Reporter.NULL);
+			reader.next(key, value);
+		}
+		finally {
+			IOUtilFunctions.closeSilently(reader);
+		}
 		
 		//parse task
 		Task t = Task.parseCompactString( value.toString() );
@@ -120,23 +126,7 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 				for( BlockLocation bl : tmp1 )
 					countHosts(hosts, bl.getHosts());
 			}
-			
-			/*
-			int lFrom  = t.getIterations().get(0).getIntValue();
-			int lTo    = t.getIterations().get(1).getIntValue();
-			int lIncr  = t.getIterations().get(2).getIntValue();				
-			for( int i=lFrom; i<=lTo; i+=lIncr )
-			{
-				String fname = _fname+"/"+String.valueOf( ((i-_offset)/_blen+_offset) );
-				FileSystem fs = FileSystem.get(job);
-				FileStatus status = fs.getFileStatus(new Path(fname)); 
-				BlockLocation[] tmp1 = fs.getFileBlockLocations(status, 0, status.getLen());
-				for( BlockLocation bl : tmp1 )
-					countHosts(hosts, bl.getHosts());
-			}*/
 		}
-
-		//System.out.println("Get locations "+time.stop()+"");
 		
 		//majority consensus on top host
 		return getTopHosts(hosts);

@@ -26,30 +26,31 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 
-import org.apache.sysml.api.DMLException;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.OptimizerUtils;
+import org.apache.sysml.hops.codegen.cplan.CNode;
+import org.apache.sysml.hops.codegen.cplan.CNodeMultiAgg;
+import org.apache.sysml.hops.codegen.cplan.CNodeTpl;
 import org.apache.sysml.hops.globalopt.gdfgraph.GDFLoopNode;
 import org.apache.sysml.hops.globalopt.gdfgraph.GDFNode;
 import org.apache.sysml.hops.globalopt.gdfgraph.GDFNode.NodeType;
 import org.apache.sysml.hops.ipa.FunctionCallGraph;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.DMLProgram;
-import org.apache.sysml.parser.ForStatement;
 import org.apache.sysml.parser.ExternalFunctionStatement;
+import org.apache.sysml.parser.ForStatement;
 import org.apache.sysml.parser.ForStatementBlock;
 import org.apache.sysml.parser.FunctionStatement;
 import org.apache.sysml.parser.FunctionStatementBlock;
 import org.apache.sysml.parser.IfStatement;
 import org.apache.sysml.parser.IfStatementBlock;
+import org.apache.sysml.parser.LanguageException;
 import org.apache.sysml.parser.ParForStatementBlock;
+import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.parser.WhileStatement;
 import org.apache.sysml.parser.WhileStatementBlock;
-import org.apache.sysml.parser.LanguageException;
-import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ExternalFunctionProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
@@ -85,7 +86,14 @@ public class Explain
 		HOPS,     // explain program and hops
 		RUNTIME,  // explain runtime program (default)
 		RECOMPILE_HOPS, // explain hops, incl recompile
-		RECOMPILE_RUNTIME, // explain runtime program, incl recompile 
+		RECOMPILE_RUNTIME;  // explain runtime program, incl recompile 
+
+		public boolean isHopsType(boolean recompile) {
+			return (this==RECOMPILE_HOPS || (!recompile && this==HOPS));
+		}
+		public boolean isRuntimeType(boolean recompile) {
+			return (this==RECOMPILE_RUNTIME || (!recompile && this==RUNTIME));
+		}
 	};
 	
 	public static class ExplainCounts {
@@ -221,11 +229,12 @@ public class Explain
 				for (String fname : prog.getFunctionStatementBlocks(namespace).keySet()) {
 					FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespace, fname);
 					FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+					String fkey = DMLProgram.constructFunctionKey(namespace, fname);
 					
 					if (fstmt instanceof ExternalFunctionStatement)
-						sb.append("----EXTERNAL FUNCTION " + namespace + "::" + fname + "\n");
+						sb.append("----EXTERNAL FUNCTION " + fkey + "\n");
 					else {
-						sb.append("----FUNCTION " + namespace + "::" + fname + " [recompile="+fsb.isRecompileOnce()+"]\n");
+						sb.append("----FUNCTION " + fkey + " [recompile="+fsb.isRecompileOnce()+"]\n");
 						for (StatementBlock current : fstmt.getBody())
 							sb.append(explainStatementBlock(current, 3));
 					}
@@ -359,6 +368,38 @@ public class Explain
 		
 		return ret;
 	}
+	
+	public static String explainCPlan( CNodeTpl cplan ) 
+		throws DMLRuntimeException 
+	{
+		StringBuilder sb = new StringBuilder();
+		
+		//create template header
+		sb.append("\n----------------------------------------\n");
+		sb.append("CPLAN: "+cplan.getTemplateInfo()+"\n");
+		sb.append("--inputs: "+Arrays.toString(cplan.getInputNames())+"\n");
+		sb.append("----------------------------------------\n");
+		
+		//explain body dag
+		cplan.resetVisitStatusOutputs();
+		if( cplan instanceof CNodeMultiAgg )
+			for( CNode output : ((CNodeMultiAgg)cplan).getOutputs() )
+				sb.append(explainCNode(output, 1));
+		else
+			sb.append(explainCNode(cplan.getOutput(), 1));
+		cplan.resetVisitStatusOutputs();
+		sb.append("----------------------------------------\n");
+		
+		return sb.toString();
+	}
+	
+	public static String explain( CNode node ) throws DMLRuntimeException {
+		return explain(node, 0);
+	}
+	
+	public static String explain( CNode node, int level ) throws DMLRuntimeException {
+		return explainCNode(node, level);
+	}
 
 	public static String explainGDFNodes( ArrayList<GDFNode> gdfnodes ) 
 		throws DMLRuntimeException
@@ -395,30 +436,7 @@ public class Explain
 				
 		return counts;		
 	}
-
-	public static ExplainType parseExplainType( String arg ) 
-		throws DMLException
-	{
-		ExplainType ret = ExplainType.NONE;
-		
-		if( arg !=null )
-		{
-			if( arg.equalsIgnoreCase("hops") )
-				ret = ExplainType.HOPS;
-			else if( arg.equalsIgnoreCase("runtime") )
-				ret = ExplainType.RUNTIME;
-			else if( arg.equalsIgnoreCase("recompile_hops") )
-				ret = ExplainType.RECOMPILE_HOPS;
-			else if( arg.equalsIgnoreCase("recompile_runtime") )
-				ret = ExplainType.RECOMPILE_RUNTIME;
-			else 
-				throw new DMLException("Failed to parse explain type: "+arg+" " +
-						               "(valid types: hops, runtime, recompile_hops, recompile_runtime).");
-		}
-		
-		return ret;
-	}
-
+	
 	public static String getIdentation( int level ) {
 		return createOffset(level);
 	}
@@ -523,11 +541,8 @@ public class Explain
 	private static String explainHop(Hop hop, int level) 
 		throws DMLRuntimeException 
 	{
-		if(   hop.getVisited() == VisitStatus.DONE 
-		   || (!SHOW_LITERAL_HOPS && hop instanceof LiteralOp) )
-		{
+		if( hop.isVisited() || (!SHOW_LITERAL_HOPS && hop instanceof LiteralOp) )
 			return "";
-		}
 		
 		StringBuilder sb = new StringBuilder();
 		String offset = createOffset(level);
@@ -551,7 +566,7 @@ public class Explain
 			childs.append(" (");
 			boolean childAdded = false;
 			for( Hop input : hop.getInput() )
-				if( !(input instanceof LiteralOp) ){
+				if( SHOW_LITERAL_HOPS || !(input instanceof LiteralOp) ){
 					childs.append(childAdded?",":"");
 					childs.append(input.getHopID());
 					childAdded = true;
@@ -595,11 +610,57 @@ public class Explain
 		
 		sb.append('\n');
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 		
 		return sb.toString();
 	}
 
+	//////////////
+	// internal explain CNODE
+
+	private static String explainCNode(CNode cnode, int level) 
+		throws DMLRuntimeException 
+	{
+		if( cnode.isVisited() )
+			return "";
+		
+		StringBuilder sb = new StringBuilder();
+		String offset = createOffset(level);
+		
+		for( CNode input : cnode.getInput() )
+			sb.append(explainCNode(input, level));
+		
+		//indentation
+		sb.append(offset);
+		
+		//hop id
+		if( SHOW_DATA_DEPENDENCIES )
+			sb.append("("+cnode.getID()+") ");
+		
+		//operation string
+		sb.append(cnode.toString());
+		
+		//input hop references 
+		if( SHOW_DATA_DEPENDENCIES ) {
+			StringBuilder childs = new StringBuilder();
+			childs.append(" (");
+			boolean childAdded = false;
+			for( CNode input : cnode.getInput() ) {
+				childs.append(childAdded?",":"");
+				childs.append(input.getID());
+				childAdded = true;
+			}
+			childs.append(")");		
+			if( childAdded )
+				sb.append(childs.toString());
+		}
+		
+		sb.append('\n');
+		cnode.setVisited();
+		
+		return sb.toString();
+	}
+	
 	//////////////
 	// internal explain GDFNODE
 

@@ -30,10 +30,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.mapred.JobConf;
 import org.apache.wink.json4j.JSONObject;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
 import org.apache.sysml.hops.DataGenOp;
 import org.apache.sysml.hops.DataOp;
@@ -44,7 +44,6 @@ import org.apache.sysml.hops.Hop.DataGenMethod;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.FileFormatTypes;
 import org.apache.sysml.hops.Hop.OpOp1;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.IndexingOp;
 import org.apache.sysml.hops.LiteralOp;
@@ -52,6 +51,7 @@ import org.apache.sysml.hops.MemoTable;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.hops.ReorgOp;
 import org.apache.sysml.hops.UnaryOp;
+import org.apache.sysml.hops.codegen.SpoofCompiler;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.hops.rewrite.ProgramRewriter;
 import org.apache.sysml.lops.CSVReBlock;
@@ -94,6 +94,7 @@ import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.mr.RandInstruction;
 import org.apache.sysml.runtime.instructions.mr.SeqInstruction;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
@@ -122,9 +123,8 @@ public class Recompiler
 	//Max threshold for in-memory reblock of text input [in bytes]
 	//reason: single-threaded text read at 20MB/s, 1GB input -> 50s (should exploit parallelism)
 	//note that we scale this threshold up by the degree of available parallelism
-	private static final long CP_REBLOCK_THRESHOLD_SIZE = (long)1024*1024*1024; 
-	private static final long CP_CSV_REBLOCK_UNKNOWN_THRESHOLD_SIZE = (long)256*1024*1024;
-	private static final long CP_TRANSFORM_UNKNOWN_THRESHOLD_SIZE = (long)1024*1024*1024;
+	private static final long CP_REBLOCK_THRESHOLD_SIZE = 1L*1024*1024*1024; 
+	private static final long CP_CSV_REBLOCK_UNKNOWN_THRESHOLD_SIZE = CP_REBLOCK_THRESHOLD_SIZE;
 	
 	/** Local reused rewriter for dynamic rewrites during recompile */
 
@@ -152,6 +152,7 @@ public class Recompiler
 	 * @param vars local variable map
 	 * @param status the recompile status
 	 * @param inplace true if in place
+	 * @param litreplace true if literal replacement
 	 * @param tid thread id
 	 * @return list of instructions
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
@@ -159,7 +160,8 @@ public class Recompiler
 	 * @throws LopsException if LopsException occurs
 	 * @throws IOException if IOException occurs
 	 */
-	public static ArrayList<Instruction> recompileHopsDag( StatementBlock sb, ArrayList<Hop> hops, LocalVariableMap vars, RecompileStatus status, boolean inplace, long tid ) 
+	public static ArrayList<Instruction> recompileHopsDag( StatementBlock sb, ArrayList<Hop> hops, 
+			LocalVariableMap vars, RecompileStatus status, boolean inplace, boolean litreplace, long tid ) 
 		throws DMLRuntimeException, HopsException, LopsException, IOException
 	{
 		ArrayList<Instruction> newInst = null;
@@ -184,10 +186,10 @@ public class Recompiler
 			}
 
 			// replace scalar reads with literals 
-			if( !inplace ) {
+			if( !inplace && litreplace ) {
 				Hop.resetVisitStatus(hops);
 				for( Hop hopRoot : hops )
-					rReplaceLiterals( hopRoot, vars );
+					rReplaceLiterals( hopRoot, vars, false );
 			}
 			
 			// refresh matrix characteristics (update stats)			
@@ -196,8 +198,14 @@ public class Recompiler
 				rUpdateStatistics( hopRoot, vars );
 			
 			// dynamic hop rewrites
-			if( !inplace )
+			if( !inplace ) {
 				_rewriter.get().rewriteHopDAGs( hops, null );
+				
+				//update stats after rewrites
+				Hop.resetVisitStatus(hops);
+				for( Hop hopRoot : hops )
+					rUpdateStatistics( hopRoot, vars );
+			}
 			
 			// refresh memory estimates (based on updated stats,
 			// before: init memo table with propagated worst-case estimates,
@@ -209,6 +217,14 @@ public class Recompiler
 			for( Hop hopRoot : hops )
 				hopRoot.refreshMemEstimates(memo); 
 			memo.extract(hops, status);
+			
+			// codegen if enabled
+			if( ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.CODEGEN) 
+					&& SpoofCompiler.RECOMPILE_CODEGEN ) {
+				Hop.resetVisitStatus(hops);
+				hops = SpoofCompiler.optimize(hops, 
+					(status==null || !status.isInitialCodegen()));
+			}
 			
 			// construct lops			
 			Dag<Lop> dag = new Dag<Lop>();
@@ -253,6 +269,7 @@ public class Recompiler
 	 * @param vars local variable map
 	 * @param status recompile status
 	 * @param inplace true if in place
+	 * @param litreplace true if literal replacement
 	 * @param tid thread id
 	 * @return list of instructions
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
@@ -260,7 +277,8 @@ public class Recompiler
 	 * @throws LopsException if LopsException occurs
 	 * @throws IOException if IOException occurs
 	 */
-	public static ArrayList<Instruction> recompileHopsDag( Hop hops, LocalVariableMap vars, RecompileStatus status, boolean inplace, long tid ) 
+	public static ArrayList<Instruction> recompileHopsDag( Hop hops, LocalVariableMap vars, 
+			RecompileStatus status, boolean inplace, boolean litreplace, long tid ) 
 		throws DMLRuntimeException, HopsException, LopsException, IOException
 	{
 		ArrayList<Instruction> newInst = null;
@@ -284,9 +302,9 @@ public class Recompiler
 			}
 			
 			// replace scalar reads with literals 
-			if( !inplace ) {
+			if( !inplace && litreplace ) {
 				hops.resetVisitStatus();
-				rReplaceLiterals( hops, vars );
+				rReplaceLiterals( hops, vars, false );
 			}
 			
 			// refresh matrix characteristics (update stats)			
@@ -294,8 +312,13 @@ public class Recompiler
 			rUpdateStatistics( hops, vars );
 			
 			// dynamic hop rewrites
-			if( !inplace )
+			if( !inplace ) {
 				_rewriter.get().rewriteHopDAG( hops, null );
+				
+				//update stats after rewrites
+				hops.resetVisitStatus();
+				rUpdateStatistics( hops, vars );
+			}
 			
 			// refresh memory estimates (based on updated stats)
 			MemoTable memo = new MemoTable();
@@ -303,6 +326,14 @@ public class Recompiler
 			memo.init(hops, status);
 			hops.resetVisitStatus();
 			hops.refreshMemEstimates(memo); 		
+			
+			// codegen if enabled
+			if( ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.CODEGEN) 
+					&& SpoofCompiler.RECOMPILE_CODEGEN ) {
+				hops.resetVisitStatus();
+				hops = SpoofCompiler.optimize(hops,
+					(status==null || !status.isInitialCodegen()));
+			}
 			
 			// construct lops			
 			Dag<Lop> dag = new Dag<Lop>();
@@ -736,7 +767,7 @@ public class Recompiler
 	
 	public static void rUpdateFunctionNames( Hop hop, long pid )
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 		
 		//update function names
@@ -750,7 +781,7 @@ public class Recompiler
 			for( Hop c : hop.getInput() )
 				rUpdateFunctionNames(c, pid);
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 	
@@ -837,7 +868,8 @@ public class Recompiler
 				//&& Recompiler.requiresRecompilation( sb.get_hops() ) 
 				/*&& !Recompiler.containsNonRecompileInstructions(tmp)*/ )
 			{
-				tmp = Recompiler.recompileHopsDag(sb, sb.get_hops(), vars, status, true, tid);
+				tmp = Recompiler.recompileHopsDag(
+					sb, sb.get_hops(), vars, status, true, false, tid);
 				pb.setInstructions( tmp );
 				
 				//propagate stats across hops (should be executed on clone of vars)
@@ -1071,10 +1103,9 @@ public class Recompiler
 	private static MatrixObject createOutputMatrix( long dim1, long dim2, long nnz )
 	{
 		MatrixObject moOut = new MatrixObject(ValueType.DOUBLE, null);
+		int blksz = ConfigurationManager.getBlocksize();
 		MatrixCharacteristics mc = new MatrixCharacteristics( 
-									dim1, dim2,
-									ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(),
-									nnz);
+				dim1, dim2, blksz, blksz, nnz);
 		MatrixFormatMetaData meta = new MatrixFormatMetaData(mc,null,null);
 		moOut.setMetaData(meta);
 		
@@ -1091,7 +1122,8 @@ public class Recompiler
 		{
 			Hop hops = isb.getPredicateHops();
 			if( hops != null ) {
-				ArrayList<Instruction> tmp = recompileHopsDag(hops, vars, status, true, tid);
+				ArrayList<Instruction> tmp = recompileHopsDag(
+						hops, vars, status, true, false, tid);
 				ipb.setPredicate( tmp );
 				if( ParForProgramBlock.RESET_RECOMPILATION_FLAGs
 					&& resetRecompile ) 
@@ -1114,7 +1146,8 @@ public class Recompiler
 		{
 			Hop hops = wsb.getPredicateHops();
 			if( hops != null ) {
-				ArrayList<Instruction> tmp = recompileHopsDag(hops, vars, status, true, tid);
+				ArrayList<Instruction> tmp = recompileHopsDag(
+					hops, vars, status, true, false, tid);
 				wpb.setPredicate( tmp );
 				if( ParForProgramBlock.RESET_RECOMPILATION_FLAGs 
 					&& resetRecompile ) 
@@ -1144,17 +1177,20 @@ public class Recompiler
 				&& resetRecompile ) 
 			{
 				if( fromHops != null ) {
-					ArrayList<Instruction> tmp = recompileHopsDag(fromHops, vars, status, true, tid);
+					ArrayList<Instruction> tmp = recompileHopsDag(
+						fromHops, vars, status, true, false, tid);
 					fpb.setFromInstructions(tmp);
 					Hop.resetRecompilationFlag(fromHops,ExecType.CP);
 				}
 				if( toHops != null ) {
-					ArrayList<Instruction> tmp = recompileHopsDag(toHops, vars, status, true, tid);
+					ArrayList<Instruction> tmp = recompileHopsDag(
+						toHops, vars, status, true, false, tid);
 					fpb.setToInstructions(tmp);
 					Hop.resetRecompilationFlag(toHops,ExecType.CP);
 				}
 				if( incrHops != null ) {
-					ArrayList<Instruction> tmp = recompileHopsDag(incrHops, vars, status, true, tid);
+					ArrayList<Instruction> tmp = recompileHopsDag(
+						incrHops, vars, status, true, false, tid);
 					fpb.setIncrementInstructions(tmp);
 					Hop.resetRecompilationFlag(incrHops,ExecType.CP);
 				}
@@ -1163,15 +1199,18 @@ public class Recompiler
 			else //no reset of recompilation flags
 			{
 				if( fromHops != null ) {
-					ArrayList<Instruction> tmp = recompileHopsDag(fromHops, vars, status, true, tid);
+					ArrayList<Instruction> tmp = recompileHopsDag(
+						fromHops, vars, status, true, false, tid);
 					fpb.setFromInstructions(tmp);
 				}
 				if( toHops != null ) {
-					ArrayList<Instruction> tmp = recompileHopsDag(toHops, vars, status, true, tid);
+					ArrayList<Instruction> tmp = recompileHopsDag(
+						toHops, vars, status, true, false, tid);
 					fpb.setToInstructions(tmp);
 				}
 				if( incrHops != null ) {
-					ArrayList<Instruction> tmp = recompileHopsDag(incrHops, vars, status, true, tid);
+					ArrayList<Instruction> tmp = recompileHopsDag(
+						incrHops, vars, status, true, false, tid);
 					fpb.setIncrementInstructions(tmp);
 				}
 			}
@@ -1272,12 +1311,19 @@ public class Recompiler
 		}
 		
 	}
-	
+
+	/**
+	 * Remove any scalar variables from the variable map if the variable
+	 * is updated in this block.
+	 *
+	 * @param callVars  Map of variables eligible for propagation.
+	 * @param sb  DML statement block.
+	 */
 	public static void removeUpdatedScalars( LocalVariableMap callVars, StatementBlock sb )
 	{
 		if( sb != null )
 		{
-			//remove update scalar variables from constants
+			//remove updated scalar variables from constants
 			for( String varname : sb.variablesUpdated().getVariables().keySet() )
 			{
 				Data dat = callVars.get(varname);
@@ -1399,7 +1445,7 @@ public class Recompiler
 	private static boolean rRequiresRecompile( Hop hop )
 	{	
 		boolean ret = hop.requiresRecompile();
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return ret;
 		
 		if( hop.getInput() != null )
@@ -1409,7 +1455,7 @@ public class Recompiler
 				if( ret ) break; // early abort
 			}
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 		
 		return ret;
 	}
@@ -1427,7 +1473,7 @@ public class Recompiler
 	 */
 	public static void rClearLops( Hop hop )
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 		
 		//clear all relevant lops to allow for recompilation
@@ -1446,13 +1492,13 @@ public class Recompiler
 					rClearLops(c);
 		}
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 	public static void rUpdateStatistics( Hop hop, LocalVariableMap vars ) 
 		throws DMLRuntimeException
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 
 		//recursively process children
@@ -1573,7 +1619,7 @@ public class Recompiler
 			hop.refreshSizeInformation();
 		}
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 
 	/**
@@ -1581,18 +1627,20 @@ public class Recompiler
 	 * 
 	 * @param hop high-level operator
 	 * @param vars local variable map
+	 * @param scalarsOnly if true, replace only scalar variables but no matrix operations;
+	 *            if false, apply full literal replacement
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public static void rReplaceLiterals( Hop hop, LocalVariableMap vars ) 
+	public static void rReplaceLiterals( Hop hop, LocalVariableMap vars, boolean scalarsOnly ) 
 		throws DMLRuntimeException
 	{
 		//public interface 
-		LiteralReplacement.rReplaceLiterals(hop, vars);
+		LiteralReplacement.rReplaceLiterals(hop, vars, scalarsOnly);
 	}
 	
 	public static void rSetExecType( Hop hop, ExecType etype )
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 		
 		//update function names
@@ -1602,7 +1650,7 @@ public class Recompiler
 			for( Hop c : hop.getInput() )
 				rSetExecType(c, etype);
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 
@@ -1771,7 +1819,15 @@ public class Recompiler
 		
 		//robustness unknown dimensions, e.g., for csv reblock
 		if( rows <= 0 || cols <= 0 ) {
-			return false;
+			try {
+				long size = MapReduceTool.getFilesizeOnHDFS(new Path(obj.getFileName()));
+				return (size < OptimizerUtils.getLocalMemBudget() &&
+					size < CP_CSV_REBLOCK_UNKNOWN_THRESHOLD_SIZE * 
+					OptimizerUtils.getParallelTextReadParallelism());
+			} 
+			catch(IllegalArgumentException | IOException ex) {
+				throw new DMLRuntimeException(ex);
+			}
 		}
 		
 		//check valid dimensions and memory requirements
@@ -1789,26 +1845,6 @@ public class Recompiler
 		long cpThreshold = CP_REBLOCK_THRESHOLD_SIZE * 
 		           OptimizerUtils.getParallelTextReadParallelism();
 		return (estFilesize < cpThreshold);
-	}
-	
-	public static boolean checkCPTransform(MRJobInstruction inst, MatrixObject[] inputs) 
-		throws DMLRuntimeException, IOException 
-	{
-		boolean ret = true;
-		
-		MatrixObject input = inputs[0]; // there can only be one input in TRANSFORM job
-		
-		Path path = new Path(input.getFileName());
-		long sizeOnHDFS = MapReduceTool.getFilesizeOnHDFS(path);
-		
-		// dimensions are not checked here, since the worst case dimensions 
-		// after transformations (with potential dummycoding) are typically unknown.
-		
-		if( sizeOnHDFS > CP_TRANSFORM_UNKNOWN_THRESHOLD_SIZE 
-				|| sizeOnHDFS*4 > OptimizerUtils.getLocalMemBudget() )
-			ret = false;
-		LOG.info("checkCPTransform(): size = " + sizeOnHDFS + ", recompile to CP = " + ret);
-		return ret;
 	}
 	
 	public static boolean checkCPDataGen( MRJobInstruction inst, String updatedRandInst ) 
@@ -1917,10 +1953,8 @@ public class Recompiler
 		{
 			//get meta data filename
 			String mtdname = DataExpression.getMTDFileName(dop.getFileName());
-			
-			JobConf job = ConfigurationManager.getCachedJobConf();
-			FileSystem fs = FileSystem.get(job);
 			Path path = new Path(mtdname);
+			FileSystem fs = IOUtilFunctions.getFileSystem(mtdname);
 			if( fs.exists(path) ){
 				BufferedReader br = null;
 				try
@@ -1936,8 +1970,7 @@ public class Recompiler
 					dop.setDim2((dt==DataType.MATRIX||dt==DataType.FRAME)?Long.parseLong(mtd.get(DataExpression.READCOLPARAM).toString()):0);
 				}
 				finally {
-					if( br != null )
-						br.close();
+					IOUtilFunctions.closeSilently(br);
 				}
 			}
 		}

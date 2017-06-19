@@ -168,7 +168,13 @@ public class QuaternaryOp extends Hop implements MultiThreadedHop
 		inU.getParent().add(this);
 		inV.getParent().add(this);
 	}
-	
+
+	@Override
+	public void checkArity() throws HopsException {
+		HopsException.check(_input.size() == 3 || _input.size() == 4, this,
+				"should have arity 3 or 4 but has arity %d", _input.size());
+	}
+
 	public OpOp4 getOp(){
 		return _op;
 	}
@@ -284,19 +290,6 @@ public class QuaternaryOp extends Hop implements MultiThreadedHop
 		String s = new String("");
 		s += "q(" + HopsOpOp4String.get(_op) + ")";
 		return s;
-	}
-
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + _op);
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	@Override
@@ -1579,7 +1572,7 @@ public class QuaternaryOp extends Hop implements MultiThreadedHop
 		
 		//compare basic inputs and weights (always existing)
 		boolean ret = (_op == that2._op
-				&& getInput().size() == getInput().size()
+				&& getInput().size() == that2.getInput().size()
 				&& getInput().get(0) == that2.getInput().get(0)
 				&& getInput().get(1) == that2.getInput().get(1)
 				&& getInput().get(2) == that2.getInput().get(2) );

@@ -61,6 +61,7 @@ import org.apache.sysml.runtime.instructions.cp.QuantileSortCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.QuaternaryCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.RelationalBinaryCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.ReorgCPInstruction;
+import org.apache.sysml.runtime.instructions.cp.SpoofCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.StringInitCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.TernaryCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.UaggOuterChainCPInstruction;
@@ -190,7 +191,6 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "rmempty"	    , CPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2CPInstructionType.put( "replace"	    , CPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2CPInstructionType.put( "rexpand"	    , CPINSTRUCTION_TYPE.ParameterizedBuiltin);
-		String2CPInstructionType.put( "transform"	, CPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2CPInstructionType.put( "transformapply",CPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2CPInstructionType.put( "transformdecode",CPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2CPInstructionType.put( "transformencode",CPINSTRUCTION_TYPE.MultiReturnParameterizedBuiltin);
@@ -224,6 +224,7 @@ public class CPInstructionParser extends InstructionParser
 		// Opcodes related to convolutions
 		String2CPInstructionType.put( "relu_backward"      , CPINSTRUCTION_TYPE.Convolution);
 		String2CPInstructionType.put( "relu_maxpooling"      , CPINSTRUCTION_TYPE.Convolution);
+		String2CPInstructionType.put( "relu_maxpooling_backward"      , CPINSTRUCTION_TYPE.Convolution);
 		String2CPInstructionType.put( "maxpooling"      , CPINSTRUCTION_TYPE.Convolution);
 		String2CPInstructionType.put( "maxpooling_backward"      , CPINSTRUCTION_TYPE.Convolution);
 		String2CPInstructionType.put( "conv2d"      , CPINSTRUCTION_TYPE.Convolution);
@@ -231,6 +232,7 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "conv2d_backward_filter"      , CPINSTRUCTION_TYPE.Convolution);
 		String2CPInstructionType.put( "conv2d_backward_data"      , CPINSTRUCTION_TYPE.Convolution);
 		String2CPInstructionType.put( "bias_add"      , CPINSTRUCTION_TYPE.Convolution);
+		String2CPInstructionType.put( "bias_multiply"      , CPINSTRUCTION_TYPE.Convolution);
 		
 		// Quaternary instruction opcodes
 		String2CPInstructionType.put( "wsloss"  , CPINSTRUCTION_TYPE.Quaternary);
@@ -271,8 +273,9 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "lu",    CPINSTRUCTION_TYPE.MultiReturnBuiltin);
 		String2CPInstructionType.put( "eigen", CPINSTRUCTION_TYPE.MultiReturnBuiltin);
 		
-		String2CPInstructionType.put( "partition", CPINSTRUCTION_TYPE.Partition);
-		String2CPInstructionType.put( "compress", CPINSTRUCTION_TYPE.Compression);
+		String2CPInstructionType.put( "partition", 	CPINSTRUCTION_TYPE.Partition);
+		String2CPInstructionType.put( "compress", 	CPINSTRUCTION_TYPE.Compression);
+		String2CPInstructionType.put( "spoof", 		CPINSTRUCTION_TYPE.SpoofFused);
 		
 		//CP FILE instruction
 		String2CPFileInstructionType = new HashMap<String, CPINSTRUCTION_TYPE>();
@@ -424,16 +427,19 @@ public class CPInstructionParser extends InstructionParser
 			
 			case Partition:
 				return DataPartitionCPInstruction.parseInstruction(str);	
-	
-			case Compression:
-				return (CPInstruction) CompressionCPInstruction.parseInstruction(str);	
-				
+		
 			case CentralMoment:
 				return CentralMomentCPInstruction.parseInstruction(str);
 	
 			case Covariance:
 				return CovarianceCPInstruction.parseInstruction(str);
-				
+	
+			case Compression:
+				return (CPInstruction) CompressionCPInstruction.parseInstruction(str);	
+			
+			case SpoofFused:
+				return SpoofCPInstruction.parseInstruction(str);
+			
 			case INVALID:
 			
 			default: 

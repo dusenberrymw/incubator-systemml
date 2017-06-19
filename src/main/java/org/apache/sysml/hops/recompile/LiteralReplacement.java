@@ -33,7 +33,6 @@ import org.apache.sysml.hops.Hop.AggOp;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.Direction;
 import org.apache.sysml.hops.Hop.OpOp1;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.DMLRuntimeException;
@@ -51,10 +50,10 @@ public class LiteralReplacement
 	private static final long REPLACE_LITERALS_MAX_MATRIX_SIZE = 1000000; //10^6 cells (8MB)
 	private static final boolean REPORT_LITERAL_REPLACE_OPS_STATS = true; 	
 	
-	protected static void rReplaceLiterals( Hop hop, LocalVariableMap vars ) 
+	protected static void rReplaceLiterals( Hop hop, LocalVariableMap vars, boolean scalarsOnly ) 
 		throws DMLRuntimeException
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 
 		if( hop.getInput() != null )
@@ -69,10 +68,12 @@ public class LiteralReplacement
 				lit = (lit==null) ? replaceLiteralScalarRead(c, vars) : lit;
 				lit = (lit==null) ? replaceLiteralValueTypeCastScalarRead(c, vars) : lit;
 				lit = (lit==null) ? replaceLiteralValueTypeCastLiteral(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralDataTypeCastMatrixRead(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralValueTypeCastRightIndexing(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralFullUnaryAggregate(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralFullUnaryAggregateRightIndexing(c, vars) : lit;
+				if( !scalarsOnly ) {
+					lit = (lit==null) ? replaceLiteralDataTypeCastMatrixRead(c, vars) : lit;
+					lit = (lit==null) ? replaceLiteralValueTypeCastRightIndexing(c, vars) : lit;
+					lit = (lit==null) ? replaceLiteralFullUnaryAggregate(c, vars) : lit;
+					lit = (lit==null) ? replaceLiteralFullUnaryAggregateRightIndexing(c, vars) : lit;
+				}
 				
 				//replace hop w/ literal on demand
 				if( lit != null )
@@ -89,19 +90,17 @@ public class LiteralReplacement
 						}
 					}
 					else { //current hop is only parent
-						HopRewriteUtils.removeChildReferenceByPos(hop, c, i);
-						HopRewriteUtils.addChildReference(hop, lit, i);
+						HopRewriteUtils.replaceChildReference(hop, c, lit, i);
 					}
 				}
 				//recursively process children
-				else 
-				{
-					rReplaceLiterals(c, vars);	
-				}			
+				else {
+					rReplaceLiterals(c, vars, scalarsOnly);	
+				}
 			}
 		}
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 

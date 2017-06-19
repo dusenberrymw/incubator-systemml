@@ -36,6 +36,7 @@ import org.apache.hadoop.mapred.Reporter;
 
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableBlock;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableCell;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
@@ -103,8 +104,9 @@ public class DataPartitionerRemoteReducer
 			_fnameNew = fnameNew;
 			
 			try {
-				_fs = FileSystem.get(_job);
-			} catch (IOException e) {
+				_fs = IOUtilFunctions.getFileSystem(new Path(fnameNew), job);
+			} 
+			catch (IOException e) {
 				throw new RuntimeException(e);
 			}
 		}
@@ -151,10 +153,8 @@ public class DataPartitionerRemoteReducer
 					_sb.setLength(0);
 				}
 			} 
-			finally
-			{
-				if( writer != null )
-					writer.close();
+			finally {
+				IOUtilFunctions.closeSilently(writer);
 			}
 		}
 		

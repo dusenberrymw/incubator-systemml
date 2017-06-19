@@ -36,18 +36,24 @@ import org.apache.sysml.hops.Hop.Direction;
 import org.apache.sysml.hops.Hop.OpOp1;
 import org.apache.sysml.hops.Hop.OpOp3;
 import org.apache.sysml.hops.Hop.OpOp4;
+import org.apache.sysml.hops.Hop.ParamBuiltinOp;
 import org.apache.sysml.hops.Hop.ReOrgOp;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.IndexingOp;
 import org.apache.sysml.hops.LeftIndexingOp;
 import org.apache.sysml.hops.LiteralOp;
+import org.apache.sysml.hops.OptimizerUtils;
+import org.apache.sysml.hops.ParameterizedBuiltinOp;
 import org.apache.sysml.hops.Hop.OpOp2;
 import org.apache.sysml.hops.ReorgOp;
+import org.apache.sysml.hops.TernaryOp;
 import org.apache.sysml.hops.UnaryOp;
 import org.apache.sysml.lops.MapMultChain.ChainType;
 import org.apache.sysml.parser.DataExpression;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
+
+import static org.apache.sysml.hops.OptimizerUtils.ALLOW_SUM_PRODUCT_REWRITES;
 
 /**
  * Rule: Algebraic Simplifications. Simplifies binary expressions
@@ -90,13 +96,13 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		//one pass rewrite-descend (rewrite created pattern)
 		for( Hop h : roots )
 			rule_AlgebraicSimplification( h, false );
+		Hop.resetVisitStatus(roots, true);
 
-		Hop.resetVisitStatus(roots);
-		
 		//one pass descend-rewrite (for rollup) 
 		for( Hop h : roots )
 			rule_AlgebraicSimplification( h, true );
-
+		Hop.resetVisitStatus(roots, true);
+		
 		return roots;
 	}
 
@@ -132,7 +138,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	private void rule_AlgebraicSimplification(Hop hop, boolean descendFirst) 
 		throws HopsException 
 	{
-		if(hop.getVisited() == Hop.VisitStatus.DONE)
+		if(hop.isVisited())
 			return;
 		
 		//recursively process children
@@ -149,11 +155,13 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			hi = removeUnnecessaryRightIndexing(hop, hi, i);  //e.g., X[,1] -> X, if output == input size 
 			hi = removeEmptyLeftIndexing(hop, hi, i);         //e.g., X[,1]=Y -> matrix(0,nrow(X),ncol(X)), if nnz(X)==0 and nnz(Y)==0 
 			hi = removeUnnecessaryLeftIndexing(hop, hi, i);   //e.g., X[,1]=Y -> Y, if output == input dims 
-			hi = fuseLeftIndexingChainToAppend(hop, hi, i);   //e.g., X[,1]=A; X[,2]=B -> X=cbind(A,B), iff ncol(X)==2 and col1/2 lix
+			if(OptimizerUtils.ALLOW_OPERATOR_FUSION)
+				hi = fuseLeftIndexingChainToAppend(hop, hi, i);   //e.g., X[,1]=A; X[,2]=B -> X=cbind(A,B), iff ncol(X)==2 and col1/2 lix
 			hi = removeUnnecessaryCumulativeOp(hop, hi, i);   //e.g., cumsum(X) -> X, if nrow(X)==1;
 			hi = removeUnnecessaryReorgOperation(hop, hi, i); //e.g., matrix(X) -> X, if dims(in)==dims(out); r(X)->X, if 1x1 dims
 			hi = removeUnnecessaryOuterProduct(hop, hi, i);   //e.g., X*(Y%*%matrix(1,...) -> X*Y, if Y col vector
-			hi = fuseDatagenAndReorgOperation(hop, hi, i);    //e.g., t(rand(rows=10,cols=1)) -> rand(rows=1,cols=10), if one dim=1
+			if(OptimizerUtils.ALLOW_OPERATOR_FUSION)
+				hi = fuseDatagenAndReorgOperation(hop, hi, i);    //e.g., t(rand(rows=10,cols=1)) -> rand(rows=1,cols=10), if one dim=1
 			hi = simplifyColwiseAggregate(hop, hi, i);        //e.g., colsums(X) -> sum(X) or X, if col/row vector
 			hi = simplifyRowwiseAggregate(hop, hi, i);        //e.g., rowsums(X) -> sum(X) or X, if row/col vector
 			hi = simplifyColSumsMVMult(hop, hi, i);           //e.g., colSums(X*Y) -> t(Y) %*% X, if Y col vector
@@ -171,26 +179,30 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			hi = simplifySumDiagToTrace(hi);                  //e.g., sum(diag(X)) -> trace(X); if col vector
 			hi = pushdownBinaryOperationOnDiag(hop, hi, i);   //e.g., diag(X)*7 -> diag(X*7); if col vector
 			hi = pushdownSumOnAdditiveBinary(hop, hi, i);     //e.g., sum(A+B) -> sum(A)+sum(B); if dims(A)==dims(B)
-			hi = simplifyWeightedSquaredLoss(hop, hi, i);     //e.g., sum(W * (X - U %*% t(V)) ^ 2) -> wsl(X, U, t(V), W, true), 
-			hi = simplifyWeightedSigmoidMMChains(hop, hi, i); //e.g., W * sigmoid(Y%*%t(X)) -> wsigmoid(W, Y, t(X), type)
-			hi = simplifyWeightedDivMM(hop, hi, i);           //e.g., t(U) %*% (X/(U%*%t(V))) -> wdivmm(X, U, t(V), left)
-			hi = simplifyWeightedCrossEntropy(hop, hi, i);    //e.g., sum(X*log(U%*%t(V))) -> wcemm(X, U, t(V))
-			hi = simplifyWeightedUnaryMM(hop, hi, i);         //e.g., X*exp(U%*%t(V)) -> wumm(X, U, t(V), exp)
-			hi = simplifyDotProductSum(hop, hi, i);           //e.g., sum(v^2) -> t(v)%*%v if ncol(v)==1 
-			hi = fuseSumSquared(hop, hi, i);                  //e.g., sum(X^2) -> sumSq(X), if ncol(X)>1
-			hi = fuseAxpyBinaryOperationChain(hop, hi, i);    //e.g., (X+s*Y) -> (X+*s Y), (X-s*Y) -> (X-*s Y) 	
+			if(OptimizerUtils.ALLOW_OPERATOR_FUSION) {
+				hi = simplifyWeightedSquaredLoss(hop, hi, i);     //e.g., sum(W * (X - U %*% t(V)) ^ 2) -> wsl(X, U, t(V), W, true), 
+				hi = simplifyWeightedSigmoidMMChains(hop, hi, i); //e.g., W * sigmoid(Y%*%t(X)) -> wsigmoid(W, Y, t(X), type)
+				hi = simplifyWeightedDivMM(hop, hi, i);           //e.g., t(U) %*% (X/(U%*%t(V))) -> wdivmm(X, U, t(V), left)
+				hi = simplifyWeightedCrossEntropy(hop, hi, i);    //e.g., sum(X*log(U%*%t(V))) -> wcemm(X, U, t(V))
+				hi = simplifyWeightedUnaryMM(hop, hi, i);         //e.g., X*exp(U%*%t(V)) -> wumm(X, U, t(V), exp)
+				hi = simplifyDotProductSum(hop, hi, i);           //e.g., sum(v^2) -> t(v)%*%v if ncol(v)==1 
+				hi = fuseSumSquared(hop, hi, i);                  //e.g., sum(X^2) -> sumSq(X), if ncol(X)>1
+				hi = fuseAxpyBinaryOperationChain(hop, hi, i);    //e.g., (X+s*Y) -> (X+*s Y), (X-s*Y) -> (X-*s Y) 	
+			}
 			hi = reorderMinusMatrixMult(hop, hi, i);          //e.g., (-t(X))%*%y->-(t(X)%*%y), TODO size
 			hi = simplifySumMatrixMult(hop, hi, i);           //e.g., sum(A%*%B) -> sum(t(colSums(A))*rowSums(B)), if not dot product / wsloss
 			hi = simplifyEmptyBinaryOperation(hop, hi, i);    //e.g., X*Y -> matrix(0,nrow(X), ncol(X)) / X+Y->X / X-Y -> X
 			hi = simplifyScalarMVBinaryOperation(hi);         //e.g., X*y -> X*as.scalar(y), if y is a 1-1 matrix
 			hi = simplifyNnzComputation(hop, hi, i);          //e.g., sum(ppred(X,0,"!=")) -> literal(nnz(X)), if nnz known
+			hi = simplifyNrowNcolComputation(hop, hi, i);     //e.g., nrow(X) -> literal(nrow(X)), if nrow known to remove data dependency
+			hi = simplifyTableSeqExpand(hop, hi, i);          //e.g., table(seq(1,nrow(v)), v, nrow(v), m) -> rexpand(v, max=m, dir=row, ignore=false, cast=true)
 			
 			//process childs recursively after rewrites (to investigate pattern newly created by rewrites)
 			if( !descendFirst )
 				rule_AlgebraicSimplification(hi, descendFirst);
 		}
 
-		hop.setVisited(Hop.VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 	private Hop removeEmptyRightIndexing(Hop parent, Hop hi, int pos) 
@@ -206,6 +218,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				Hop hnew = HopRewriteUtils.createDataGenOpByVal( new LiteralOp(hi.getDim1()), 
 						                                         new LiteralOp(hi.getDim2()), 0);
 				HopRewriteUtils.replaceChildReference(parent, hi, hnew, pos);
+				HopRewriteUtils.cleanupUnreferenced(hi, input);
 				hi = hnew;
 				
 				LOG.debug("Applied removeEmptyRightIndexing");
@@ -229,6 +242,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				
 				//remove unnecessary right indexing
 				HopRewriteUtils.replaceChildReference(parent, hi, input, pos);
+				HopRewriteUtils.cleanupUnreferenced(hi);
 				hi = input;
 				
 				LOG.debug("Applied removeUnnecessaryRightIndexing");
@@ -252,6 +266,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				//remove unnecessary right indexing		
 				Hop hnew = HopRewriteUtils.createDataGenOp( input1, 0);
 				HopRewriteUtils.replaceChildReference(parent, hi, hnew, pos);
+				HopRewriteUtils.cleanupUnreferenced(hi, input2);
 				hi = hnew;
 				
 				LOG.debug("Applied removeEmptyLeftIndexing");
@@ -273,6 +288,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				
 				//remove unnecessary right indexing				
 				HopRewriteUtils.replaceChildReference(parent, hi, input, pos);
+				HopRewriteUtils.cleanupUnreferenced(hi);
 				hi = input;
 				
 				LOG.debug("Applied removeUnnecessaryLeftIndexing");
@@ -2036,7 +2052,16 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			else if( HopRewriteUtils.isBinary(hi2, OpOp2.MULT, 1) //no other consumer than sum
 					&& hi2.getInput().get(0).getDim2()==1 && hi2.getInput().get(1).getDim2()==1
 					&& !HopRewriteUtils.isBinary(hi2.getInput().get(0), OpOp2.MULT)
-					&& !HopRewriteUtils.isBinary(hi2.getInput().get(1), OpOp2.MULT) )
+					&& !HopRewriteUtils.isBinary(hi2.getInput().get(1), OpOp2.MULT)
+					&& ( !ALLOW_SUM_PRODUCT_REWRITES
+						|| !(  HopRewriteUtils.isBinary(hi2.getInput().get(0), OpOp2.POW)     // do not rewrite (A^2)*B
+							&& hi2.getInput().get(0).getInput().get(1) instanceof LiteralOp   // let tak+* handle it
+							&& ((LiteralOp)hi2.getInput().get(0).getInput().get(1)).getLongValue() == 2 ))
+					&& ( !ALLOW_SUM_PRODUCT_REWRITES
+						|| !( HopRewriteUtils.isBinary(hi2.getInput().get(1), OpOp2.POW)      // do not rewrite B*(A^2)
+							&& hi2.getInput().get(1).getInput().get(1) instanceof LiteralOp   // let tak+* handle it
+							&& ((LiteralOp)hi2.getInput().get(1).getInput().get(1)).getLongValue() == 2 ))
+					)
 			{
 				baLeft = hi2.getInput().get(0);
 				baRight = hi2.getInput().get(1);
@@ -2433,6 +2458,92 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			}
 		}
 		
+		return hi;
+	}
+	
+	private Hop simplifyNrowNcolComputation(Hop parent, Hop hi, int pos) 
+		throws HopsException
+	{
+		//nrow(X) -> literal(nrow(X)), ncol(X) -> literal(ncol(X)), if respective dims known
+		//(this rewrite aims to remove unnecessary data dependencies to X which trigger computation
+		//even if the intermediate is otherwise not required, e.g., when part of a fused operator)
+		if( hi instanceof UnaryOp ) 
+		{
+			if( ((UnaryOp)hi).getOp()==OpOp1.NROW && hi.getInput().get(0).getDim1()>0 ) {
+				Hop hnew = new LiteralOp(hi.getInput().get(0).getDim1());
+				HopRewriteUtils.replaceChildReference(parent, hi, hnew, pos, false);
+				HopRewriteUtils.cleanupUnreferenced(hi);
+				hi = hnew;
+				LOG.debug("Applied simplifyNrowComputation.");
+			}
+			else if( ((UnaryOp)hi).getOp()==OpOp1.NCOL && hi.getInput().get(0).getDim2()>0 ) {
+				Hop hnew = new LiteralOp(hi.getInput().get(0).getDim2());
+				HopRewriteUtils.replaceChildReference(parent, hi, hnew, pos, false);
+				HopRewriteUtils.cleanupUnreferenced(hi);
+				hi = hnew;
+				LOG.debug("Applied simplifyNcolComputation.");	
+			}
+		}
+		
+		return hi;
+	}
+	
+	private Hop simplifyTableSeqExpand(Hop parent, Hop hi, int pos) 
+		throws HopsException
+	{
+		//pattern: table(seq(1,nrow(v)), v, nrow(v), m) -> rexpand(v, max=m, dir=row, ignore=false, cast=true)
+		//note: this rewrite supports both left/right sequence 
+		if(    hi instanceof TernaryOp && hi.getInput().size()==5 //table without weights 
+			&& HopRewriteUtils.isLiteralOfValue(hi.getInput().get(2), 1) //i.e., weight of 1
+			&& hi.getInput().get(3) instanceof LiteralOp && hi.getInput().get(4) instanceof LiteralOp)
+		{
+			Hop first = hi.getInput().get(0);
+			Hop second = hi.getInput().get(1);
+			
+			//pattern a: table(seq(1,nrow(v)), v, nrow(v), m, 1)
+			if( HopRewriteUtils.isBasic1NSequence(first, second, true) && second.dimsKnown() 
+				&& HopRewriteUtils.isLiteralOfValue(hi.getInput().get(3), second.getDim1()) )
+			{
+				//setup input parameter hops
+				HashMap<String,Hop> args = new HashMap<String,Hop>();
+				args.put("target", second);
+				args.put("max", hi.getInput().get(4));
+				args.put("dir", new LiteralOp("cols"));
+				args.put("ignore", new LiteralOp(false));
+				args.put("cast", new LiteralOp(true));
+			
+				//create new hop
+				ParameterizedBuiltinOp pbop = HopRewriteUtils
+					.createParameterizedBuiltinOp(second, args, ParamBuiltinOp.REXPAND);
+				HopRewriteUtils.replaceChildReference(parent, hi, pbop, pos);
+				HopRewriteUtils.cleanupUnreferenced(hi);
+				hi = pbop;
+				
+				LOG.debug("Applied simplifyTableSeqExpand1 (line "+hi.getBeginLine()+")");	
+			}
+			//pattern b: table(v, seq(1,nrow(v)), m, nrow(v))
+			else if( HopRewriteUtils.isBasic1NSequence(second, first, true) && first.dimsKnown() 
+				&& HopRewriteUtils.isLiteralOfValue(hi.getInput().get(4), first.getDim1()) )
+			{
+				//setup input parameter hops
+				HashMap<String,Hop> args = new HashMap<String,Hop>();
+				args.put("target", first);
+				args.put("max", hi.getInput().get(3));
+				args.put("dir", new LiteralOp("rows"));
+				args.put("ignore", new LiteralOp(false));
+				args.put("cast", new LiteralOp(true));
+			
+				//create new hop
+				ParameterizedBuiltinOp pbop = HopRewriteUtils
+						.createParameterizedBuiltinOp(first, args, ParamBuiltinOp.REXPAND);
+				HopRewriteUtils.replaceChildReference(parent, hi, pbop, pos);
+				HopRewriteUtils.cleanupUnreferenced(hi);
+				hi = pbop;
+				
+				LOG.debug("Applied simplifyTableSeqExpand2 (line "+hi.getBeginLine()+")");	
+			}
+		}
+	
 		return hi;
 	}
 }

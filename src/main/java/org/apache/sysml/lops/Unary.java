@@ -95,12 +95,11 @@ public class Unary extends Lop
 			lps.addCompatibility(JobType.ANY);
 			lps.removeNonPiggybackableJobs();
 			lps.removeCompatibility(JobType.CM_COV); // CM_COV allows only reducer instructions but this is MapOrReduce. TODO: piggybacking should be updated to take this extra constraint.
-			lps.removeCompatibility(JobType.TRANSFORM);
-			this.lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
 		}
 		else {
 			lps.addCompatibility(JobType.INVALID);
-			this.lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
 		}
 	}
 
@@ -150,12 +149,11 @@ public class Unary extends Lop
 			lps.addCompatibility(JobType.ANY);
 			lps.removeNonPiggybackableJobs();
 			lps.removeCompatibility(JobType.CM_COV); // CM_COV allows only reducer instructions but this is MapOrReduce. TODO: piggybacking should be updated to take this extra constraint.
-			lps.removeCompatibility(JobType.TRANSFORM);
-			this.lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
 		}
 		else {
 			lps.addCompatibility(JobType.INVALID);
-			this.lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
 		}
 	}
 
@@ -360,9 +358,8 @@ public class Unary extends Lop
 	}
 	
 	@Override
-	public String getInstructions(int input_index, int output_index)
-			throws LopsException {
-		return getInstructions(""+input_index, ""+output_index);
+	public String getInstructions(int input_index, int output_index) throws LopsException {
+		return getInstructions(String.valueOf(input_index), String.valueOf(output_index));
 	}
 
 	@Override
@@ -371,26 +368,23 @@ public class Unary extends Lop
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
+		
 		sb.append( Lop.OPERAND_DELIMITOR );
 		sb.append( getOpcode() );
-		sb.append( OPERAND_DELIMITOR );
 		
-		if ( getInputs().get(0).getDataType() == DataType.SCALAR ) {
+		sb.append( OPERAND_DELIMITOR );
+		if ( getInputs().get(0).getDataType() == DataType.SCALAR )
 			sb.append( getInputs().get(0).prepScalarInputOperand(getExecType()));
-		}
-		else {
+		else
 			sb.append( getInputs().get(0).prepInputOperand(input1));
-		}
-		sb.append( OPERAND_DELIMITOR );
 		
-		if ( getInputs().get(1).getDataType() == DataType.SCALAR ) {
+		sb.append( OPERAND_DELIMITOR );
+		if ( getInputs().get(1).getDataType() == DataType.SCALAR )
 			sb.append( getInputs().get(1).prepScalarInputOperand(getExecType()));
-		}
-		else {
+		else 
 			sb.append( getInputs().get(1).prepInputOperand(input2));
-		}
-		sb.append( OPERAND_DELIMITOR );
 		
+		sb.append( OPERAND_DELIMITOR );
 		sb.append( this.prepOutputOperand(output));
 		
 		return sb.toString();
@@ -455,7 +449,7 @@ public class Unary extends Lop
 				sb.append( getInputs().get(scalarIndex).prepScalarInputOperand(getExecType()));
 				sb.append( OPERAND_DELIMITOR );
 			}
-			sb.append( this.prepOutputOperand(outputIndex+""));
+			sb.append( prepOutputOperand(outputIndex) );
 			
 			return sb.toString();
 			

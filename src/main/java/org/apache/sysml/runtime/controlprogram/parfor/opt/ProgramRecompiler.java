@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.IndexingOp;
 import org.apache.sysml.hops.OptimizerUtils;
@@ -184,7 +183,8 @@ public class ProgramRecompiler
 				if( ret )
 				{
 					//construct new instructions
-					ArrayList<Instruction> newInst = Recompiler.recompileHopsDag(sb, sb.get_hops(), ec.getVariables(), null, true, 0);
+					ArrayList<Instruction> newInst = Recompiler.recompileHopsDag(
+						sb, sb.get_hops(), ec.getVariables(), null, true, false, 0);
 					pb.setInstructions( newInst ); 
 				}
 			}
@@ -252,7 +252,7 @@ public class ProgramRecompiler
 				//replace constant literals
 				Hop.resetVisitStatus(hops);
 				for( Hop hopRoot : hops )
-					Recompiler.rReplaceLiterals( hopRoot, vars );
+					Recompiler.rReplaceLiterals( hopRoot, vars, true );
 			}	
 		}
 	}
@@ -262,7 +262,7 @@ public class ProgramRecompiler
 	{
 		if( pred != null ){
 			pred.resetVisitStatus();
-			Recompiler.rReplaceLiterals(pred, vars);
+			Recompiler.rReplaceLiterals(pred, vars, true);
 		}
 	}
 	
@@ -381,7 +381,8 @@ public class ProgramRecompiler
 			if( ret )
 			{
 				//construct new instructions
-				tmp = Recompiler.recompileHopsDag(hop, ec.getVariables(), null, true, 0);
+				tmp = Recompiler.recompileHopsDag(
+					hop, ec.getVariables(), null, true, false, 0);
 			}
 		}
 		catch(Exception ex)
@@ -396,7 +397,7 @@ public class ProgramRecompiler
 	{
 		boolean ret = false;
 		
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return ret;
 		
 		ArrayList<Hop> in = hop.getInput();
@@ -423,7 +424,7 @@ public class ProgramRecompiler
 			for( Hop hin : in )
 				ret |= rFindAndSetCPIndexingHOP(hin,var);
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 		
 		return ret;
 	}
@@ -432,7 +433,7 @@ public class ProgramRecompiler
 	{
 		boolean ret = false;
 		
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return ret;
 		
 		ArrayList<Hop> in = hop.getInput();
@@ -453,7 +454,7 @@ public class ProgramRecompiler
 			for( Hop hin : in )
 				ret |= rFindAndReleaseIndexingHOP(hin,var);
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 		
 		return ret;
 	}

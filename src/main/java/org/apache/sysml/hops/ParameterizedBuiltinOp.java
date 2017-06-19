@@ -35,7 +35,6 @@ import org.apache.sysml.lops.GroupedAggregateM;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.LopsException;
-import org.apache.sysml.lops.OutputParameters.Format;
 import org.apache.sysml.lops.PMMJ;
 import org.apache.sysml.lops.PartialAggregate.CorrectionLocationType;
 import org.apache.sysml.lops.ParameterizedBuiltin;
@@ -113,6 +112,13 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 		refreshSizeInformation();
 	}
 
+	@Override
+	public void checkArity() throws HopsException {
+		int sz = _input.size();
+		int pz = _paramIndexMap.size();
+		HopsException.check(sz == pz, this, "has %d inputs but %d parameters", sz, pz);
+	}
+
 	public HashMap<String, Integer> getParamIndexMap(){
 		return _paramIndexMap;
 	}
@@ -152,6 +158,11 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 	public Hop getTargetHop() {
 		return _paramIndexMap.containsKey("target") ?   
 			getInput().get(_paramIndexMap.get("target")) : null;
+	}
+	
+	public Hop getParameterHop(String name) {
+		return _paramIndexMap.containsKey(name) ?   
+			getInput().get(_paramIndexMap.get(name)) : null;	
 	}
 	
 	@Override
@@ -196,20 +207,6 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 				constructLopsRExpand(inputlops, et);
 				break;
 			} 
-			case TRANSFORM: {
-				ExecType et = optFindExecType();
-				
-				ParameterizedBuiltin pbilop = new ParameterizedBuiltin(inputlops,
-						HopsParameterizedBuiltinLops.get(_op), getDataType(), getValueType(), et);
-				setOutputDimensions(pbilop);
-				setLineNumbers(pbilop);
-				// output of transform is always in CSV format
-				// to produce a blocked output, this lop must be 
-				// fed into CSV Reblock lop.
-				pbilop.getOutputParameters().setFormat(Format.CSV);
-				setLops(pbilop);
-				break;
-			}
 			case CDF:
 			case INVCDF: 
 			case REPLACE:
@@ -779,8 +776,9 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 	{
 		if( et == ExecType.CP || et == ExecType.SPARK )
 		{
+			int k = OptimizerUtils.getConstrainedNumThreads( _maxNumThreads );
 			ParameterizedBuiltin pbilop = new ParameterizedBuiltin(inputlops, 
-					HopsParameterizedBuiltinLops.get(_op), getDataType(), getValueType(), et);
+					HopsParameterizedBuiltinLops.get(_op), getDataType(), getValueType(), et, k);
 			setOutputDimensions(pbilop);
 			setLineNumbers(pbilop);
 			setLops(pbilop);
@@ -800,19 +798,6 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 			setOutputDimensions(finalagg);
 			setLineNumbers(finalagg);
 			setLops(finalagg);
-		}
-	}
-	
-	
-	@Override
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug(" " + _op);
-			}
-
-			setVisited(VisitStatus.DONE);
 		}
 	}
 
@@ -1091,11 +1076,6 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 		}
 		else 
 		{
-			if( _op == ParamBuiltinOp.TRANSFORM ) {
-				// force remote, at runtime cp transform triggered for small files.
-				return (_etype = REMOTE);
-			}
-			
 			if ( OptimizerUtils.isMemoryBasedOptLevel() ) {
 				_etype = findExecTypeByMemEstimate();
 			}

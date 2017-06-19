@@ -42,7 +42,7 @@ import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
-import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 import org.apache.sysml.runtime.controlprogram.caching.CacheStatistics;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
@@ -51,7 +51,7 @@ import org.apache.sysml.runtime.controlprogram.parfor.stat.Stat;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableBlock;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableCell;
 import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.io.MatrixReader;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
@@ -67,12 +67,11 @@ import org.apache.sysml.yarn.DMLAppMasterUtils;
  */
 public class RemoteDPParForMR
 {
-	
 	protected static final Log LOG = LogFactory.getLog(RemoteDPParForMR.class.getName());
 
-	public static RemoteParForJobReturn runJob(long pfid, String itervar, String matrixvar, String program, String resultFile, MatrixObject input, 
-			                                   PDataPartitionFormat dpf, OutputInfo oi, boolean tSparseCol, //config params
-			                                   boolean enableCPCaching, int numReducers, int replication, int max_retry)  //opt params
+	public static RemoteParForJobReturn runJob(long pfid, String itervar, String matrixvar, String program, 
+			String resultFile, MatrixObject input, PartitionFormat dpf, OutputInfo oi, boolean tSparseCol, //config params
+			boolean enableCPCaching, int numReducers, int replication)  //opt params
 		throws DMLRuntimeException
 	{
 		RemoteParForJobReturn ret = null;
@@ -103,7 +102,8 @@ public class RemoteDPParForMR
 			long clen = input.getNumColumns();
 			int brlen = (int) input.getNumRowsPerBlock();
 			int bclen = (int) input.getNumColumnsPerBlock();
-			MRJobConfiguration.setPartitioningInfo(job, rlen, clen, brlen, bclen, InputInfo.BinaryBlockInputInfo, oi, dpf, 1, input.getFileName(), itervar, matrixvar, tSparseCol);
+			MRJobConfiguration.setPartitioningInfo(job, rlen, clen, brlen, bclen, InputInfo.BinaryBlockInputInfo, 
+					oi, dpf._dpf, dpf._N, input.getFileName(), itervar, matrixvar, tSparseCol);
 			job.setInputFormat(InputInfo.BinaryBlockInputInfo.inputFormatClass);
 			FileInputFormat.setInputPaths(job, path);
 			
@@ -246,20 +246,19 @@ public class RemoteDPParForMR
 	{
 		HashMap<Long,LocalVariableMap> tmp = new HashMap<Long,LocalVariableMap>();
 
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path(fname);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		LongWritable key = new LongWritable(); //workerID
 		Text value = new Text();               //serialized var header (incl filename)
 		
 		int countAll = 0;
-		for( Path lpath : MatrixReader.getSequenceFilePaths(fs, path) )
+		for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) )
 		{
-			SequenceFile.Reader reader = new SequenceFile.Reader(FileSystem.get(job),lpath,job);
+			SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
 			try
 			{
 				while( reader.next(key, value) )
 				{
-					//System.out.println("key="+key.get()+", value="+value.toString());
 					if( !tmp.containsKey( key.get() ) )
 		        		tmp.put(key.get(), new LocalVariableMap ());	   
 					Object[] dat = ProgramConverter.parseDataObject( value.toString() );
@@ -267,10 +266,8 @@ public class RemoteDPParForMR
 		        	countAll++;
 				}
 			}	
-			finally
-			{
-				if( reader != null )
-					reader.close();
+			finally {
+				IOUtilFunctions.closeSilently(reader);
 			}
 		}		
 

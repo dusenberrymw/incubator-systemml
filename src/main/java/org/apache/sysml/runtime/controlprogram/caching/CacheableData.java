@@ -22,6 +22,9 @@ package org.apache.sysml.runtime.controlprogram.caching;
 import java.io.File;
 import java.io.IOException;
 import java.lang.ref.SoftReference;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.lang.mutable.MutableBoolean;
 import org.apache.commons.logging.Log;
@@ -33,9 +36,10 @@ import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.LazyWriteBuffer.RPolicy;
-import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.instructions.cp.Data;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.instructions.spark.data.BroadcastObject;
 import org.apache.sysml.runtime.instructions.spark.data.RDDObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -48,6 +52,7 @@ import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.runtime.util.MapReduceTool;
+
 
 /**
  * Each object of this class is a cache envelope for some large piece of data
@@ -115,6 +120,12 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	private static ThreadLocal<Long> sizePinned = new ThreadLocal<Long>() {
         @Override protected Long initialValue() { return 0L; }
     };
+
+	//current size of live broadcast objects (because Spark's ContextCleaner maintains 
+	//a buffer with references to prevent eager cleanup by GC); note that this is an 
+	//overestimate, because we maintain partitioned broadcasts as soft references, which 
+	//might be collected by the GC and subsequently cleaned up by Spark's ContextCleaner.
+	private static AtomicLong _refBCs = new AtomicLong(0);	
     
 	static {
 		_seq = new IDSequence();
@@ -180,7 +191,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	//for lazily evaluated RDDs, and (2) as abstraction for environments that do not necessarily have spark libraries available
 	private RDDObject _rddHandle = null; //RDD handle
 	private BroadcastObject<T> _bcHandle = null; //Broadcast handle
-	protected GPUObject _gpuHandle = null;
+	protected HashMap<GPUContext, GPUObject> _gpuObjects = null; //Per GPUContext object allocated on GPU
 	
 	/**
 	 * Basic constructor for any cacheable data.
@@ -193,6 +204,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		_uniqueID = (int)_seq.getNextID();		
 		_cacheStatus = CacheStatus.EMPTY;
 		_numReadThreads = 0;
+		_gpuObjects = new HashMap<GPUContext, GPUObject>();
 	}
 	
 	/**
@@ -206,7 +218,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		_hdfsFileName = that._hdfsFileName;
 		_hdfsFileExists = that._hdfsFileExists; 
 		_varName = that._varName;
-		_gpuHandle = that._gpuHandle;
+		_gpuObjects = that._gpuObjects;
 	}
 
 	
@@ -334,14 +346,15 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			bc.setBackReference(this);
 	}
 
-	public GPUObject getGPUObject() {
-		return _gpuHandle;
+	public synchronized GPUObject getGPUObject(GPUContext gCtx) {
+		return _gpuObjects.get(gCtx);
 	}
-	
-	public void setGPUObject(GPUObject handle) {
-		_gpuHandle = handle;
+
+	public synchronized void setGPUObject(GPUContext gCtx, GPUObject gObj) throws DMLRuntimeException {
+		GPUObject old = _gpuObjects.put(gCtx, gObj);
+		if (old != null)
+				throw new DMLRuntimeException("GPU : Inconsistent internal state - this CacheableData already has a GPUObject assigned to the current GPUContext (" + gCtx + ")");
 	}
-	
 	
 	// *********************************************
 	// ***                                       ***
@@ -377,12 +390,20 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( _data == null )
 			getCache();
 			
-		//call acquireHostRead if gpuHandle is set as well as is allocated  
-		if( _gpuHandle != null && _gpuHandle.isAllocated()) {
-			_gpuHandle.acquireHostRead();
-			if( _data == null )
-				getCache();
-		}
+		//call acquireHostRead if gpuHandle is set as well as is allocated
+        boolean copiedFromGPU = false;
+        for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
+            GPUObject gObj = kv.getValue();
+            if (gObj != null && copiedFromGPU && gObj.isDirty()) {
+                LOG.error("Inconsistent internal state - A copy of this CacheableData was dirty on more than 1 GPU");
+                throw new CacheException("Internal Error : Inconsistent internal state, A copy of this CacheableData was dirty on more than 1 GPU");
+            } else if (gObj != null){
+                copiedFromGPU = gObj.acquireHostRead();
+                if( _data == null )
+                    getCache();
+            }
+        }
+
 		//read data from HDFS/RDD if required
 		//(probe data for cache_nowrite / jvm_reuse)  
 		if( isEmpty(true) && _data==null ) 
@@ -411,10 +432,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 					_data = readBlobFromRDD( getRDDHandle(), writeStatus );
 					
 					//mark for initial local write (prevent repeated execution of rdd operations)
-					if( writeStatus.booleanValue() )
-						_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
-					else
-						_requiresLocalWrite = true;
+					_requiresLocalWrite = writeStatus.booleanValue() ? 
+						CACHING_WRITE_CACHE_ON_READ : true;
 				}
 				
 				setDirty(false);
@@ -510,10 +529,10 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * @param newData new data
 	 * @return cacheable data
-	 * @throws CacheException if CacheException occurs
+	 * @throws DMLRuntimeException if error occurs
 	 */
 	public synchronized T acquireModify(T newData)
-		throws CacheException
+		throws DMLRuntimeException
 	{
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Acquire modify newdata "+getVarName());
@@ -624,10 +643,10 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
 	 * Out-Status: EMPTY.
 	 * 
-	 * @throws CacheException if CacheException occurs
+	 * @throws DMLRuntimeException if error occurs
 	 */
 	public synchronized void clearData() 
-		throws CacheException
+		throws DMLRuntimeException
 	{
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Clear data "+getVarName());
@@ -654,9 +673,14 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			_rddHandle.setBackReference(null);
 		if( _bcHandle != null )
 			_bcHandle.setBackReference(null);
-		if( _gpuHandle != null )
-			_gpuHandle.clearData();
-		
+		if( _gpuObjects != null ) {
+		    for (GPUObject gObj : _gpuObjects.values()){
+		        if (gObj != null) {
+                    gObj.clearData();
+                }
+            }
+        }
+
 		// change object state EMPTY
 		setDirty(false);
 		setEmpty();
@@ -724,10 +748,19 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 
 		LOG.trace("Exporting " + this.getDebugName() + " to " + fName + " in format " + outputFormat);
 		
-		//TODO remove 
-		if( getGPUObject() != null && getGPUObject().isAllocated() ) {
-			getGPUObject().acquireHostRead();
-		}
+		//TODO remove
+        boolean copiedFromGPU = false;
+        for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
+            GPUObject gObj = kv.getValue();
+            if (gObj != null && copiedFromGPU && gObj.isDirty()) {
+                LOG.error("Inconsistent internal state - A copy of this CacheableData was dirty on more than 1 GPU");
+                throw new CacheException("Internal Error : Inconsistent internal state, A copy of this CacheableData was dirty on more than 1 GPU");
+            } else if (gObj != null){
+                copiedFromGPU = gObj.acquireHostRead();
+                if( _data == null )
+                    getCache();
+            }
+        }
 				
 		boolean pWrite = false; // !fName.equals(_hdfsFileName); //persistent write flag
 		if ( fName.equals(_hdfsFileName) ) {
@@ -800,14 +833,19 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 				throw new CacheException ("Export to " + fName + " failed.", e);
 			}
 		}
-		else if( getRDDHandle()!=null && //pending rdd operation
-				!getRDDHandle().allowsShortCircuitRead() )
+		else if( getRDDHandle()!=null && getRDDHandle().isPending()
+			&& !getRDDHandle().isHDFSFile() 
+			&& !getRDDHandle().allowsShortCircuitRead() )
 		{
 			//CASE 3: pending rdd operation (other than checkpoints)
 			try
 			{
+				//write matrix or frame
 				writeBlobFromRDDtoHDFS(getRDDHandle(), fName, outputFormat);
 				writeMetaData( fName, outputFormat, formatProperties );
+
+				//update rdd status
+				getRDDHandle().setPending(false);
 			}
 			catch (Exception e) {
 				throw new CacheException ("Export to " + fName + " failed.", e);
@@ -1213,6 +1251,14 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		return sizePinned.get();
 	}
 	
+	public static void addBroadcastSize(long size) {
+		_refBCs.addAndGet(size);
+	}
+	
+	public static long getBroadcastSize() {
+		return _refBCs.longValue();
+	}
+	
 	// --------- STATIC CACHE INIT/CLEANUP OPERATIONS ----------
 
 	public synchronized static void cleanupCacheDir() {
@@ -1285,6 +1331,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	
 		//init write-ahead buffer
 		LazyWriteBuffer.init();
+		_refBCs.set(0);
 		
 		_activeFlag = true; //turn on caching
 	}

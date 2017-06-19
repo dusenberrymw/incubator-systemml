@@ -30,7 +30,6 @@ import org.apache.sysml.runtime.util.UtilFunctions;
 
 public class LiteralOp extends Hop 
 {
-	
 	private double value_double = Double.NaN;
 	private long value_long = Long.MAX_VALUE;
 	private String value_string;
@@ -44,25 +43,37 @@ public class LiteralOp extends Hop
 	
 	public LiteralOp(double value) {
 		super(String.valueOf(value), DataType.SCALAR, ValueType.DOUBLE);
-		this.value_double = value;
+		value_double = value;
 	}
 
 	public LiteralOp(long value) {
 		super(String.valueOf(value), DataType.SCALAR, ValueType.INT);
-		this.value_long = value;
+		value_long = value;
 	}
 
 	public LiteralOp(String value) {
 		super(value, DataType.SCALAR, ValueType.STRING);
-		this.value_string = value;
+		value_string = value;
 	}
 
 	public LiteralOp(boolean value) {
 		super(String.valueOf(value), DataType.SCALAR, ValueType.BOOLEAN);
-		this.value_boolean = value;
+		value_boolean = value;
+	}
+	
+	public LiteralOp(LiteralOp that) {
+		super(that.getName(), that.getDataType(), that.getValueType());
+		value_double = that.value_double;
+		value_long = that.value_long;
+		value_string = that.value_string;
+		value_boolean = that.value_boolean;
 	}
 
-	
+	@Override
+	public void checkArity() throws HopsException {
+		HopsException.check(_input.isEmpty(), this, "should have 0 inputs but has %d inputs", _input.size());
+	}
+
 	@Override
 	public Lop constructLops()
 		throws HopsException, LopsException  
@@ -105,37 +116,6 @@ public class LiteralOp extends Hop
 		//note: no reblock lop because always scalar
 		
 		return getLops();
-	}
-
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				switch (getValueType()) {
-				case DOUBLE:
-					LOG.debug("  Value: " + value_double);
-					break;
-				case BOOLEAN:
-					LOG.debug("  Value: " + value_boolean);
-					break;
-				case STRING:
-					LOG.debug("  Value: " + value_string);
-					break;
-				case INT:
-					LOG.debug("  Value: " + value_long);
-					break;
-				default:
-					throw new HopsException(this.printErrorLocation() +
-							"unexpected value type printing LiteralOp.\n");
-				}
-
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	@Override
@@ -214,7 +194,7 @@ public class LiteralOp extends Hop
 		//do nothing; it is a scalar
 	}
 	
-	public long getLongValue() throws HopsException 
+	public long getLongValue() 
 	{
 		switch( getValueType() ) {
 			case INT:		
@@ -223,8 +203,10 @@ public class LiteralOp extends Hop
 				return UtilFunctions.toLong(value_double);
 			case STRING:
 				return Long.parseLong(value_string);	
+			case BOOLEAN: 
+				return value_boolean ? 1 : 0;
 			default:
-				throw new HopsException("Can not coerce an object of type " + getValueType() + " into Long.");
+				return -1;
 		}
 	}
 	

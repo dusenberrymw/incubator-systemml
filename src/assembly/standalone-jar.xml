@@ -31,14 +31,6 @@
 
 	<fileSets>
 		<fileSet>
-			<directory>${basedir}</directory>
-			<includes>
-				<include>DISCLAIMER</include>
-			</includes>
-			<outputDirectory>META-INF</outputDirectory>
-		</fileSet>
-
-		<fileSet>
 			<directory>${basedir}/src/assembly/standalone-jar</directory>
 			<includes>
 				<include>LICENSE</include>
@@ -83,11 +75,11 @@
 		<dependencySet>
 			<includes>
 				<include>*:${artifactId}*</include>
-				<include>*:avro*</include>
 				<include>*:commons-cli*</include>
 				<include>*:commons-collections*</include>
 				<include>*:commons-configuration*</include>
 				<include>*:commons-httpclient*</include>
+				<include>*:commons-io*</include>
 				<include>*:commons-lang</include>
 				<include>*:commons-logging*</include>
 				<include>*:commons-math3*</include>
@@ -117,7 +109,7 @@
 					<exclude>META-INF/NOTICE</exclude>
 				</excludes>
 			</unpackOptions>
-			<scope>provided</scope>
+			<scope>compile</scope>
 			<unpack>true</unpack>
 		</dependencySet>
 	</dependencySets>

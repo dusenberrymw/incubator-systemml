@@ -54,14 +54,12 @@ import org.apache.sysml.lops.MapMult;
 import org.apache.sysml.lops.OutputParameters;
 import org.apache.sysml.lops.OutputParameters.Format;
 import org.apache.sysml.lops.PMMJ;
-import org.apache.sysml.lops.ParameterizedBuiltin;
 import org.apache.sysml.lops.PickByCount;
 import org.apache.sysml.lops.SortKeys;
 import org.apache.sysml.lops.Unary;
 import org.apache.sysml.parser.DataExpression;
 import org.apache.sysml.parser.Expression;
 import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
 import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
@@ -127,7 +125,7 @@ public class Dag<N extends Lop>
 	private HashMap<Long, Integer> IDMap = null;
 
 
-	private class NodeOutput {
+	private static class NodeOutput {
 		String fileName;
 		String varName;
 		OutputInfo outInfo;
@@ -205,8 +203,12 @@ public class Dag<N extends Lop>
 		return scratchFilePath;
 	}
 
+	public static String getNextUniqueFilenameSuffix() {
+		return "temp" + job_id.getNextID();
+	}
+	
 	public String getNextUniqueFilename() {
-		return getFilePath() + "temp" + job_id.getNextID();
+		return getFilePath() + getNextUniqueFilenameSuffix();
 	}
 	
 	public static String getNextUniqueVarname(DataType dt) {
@@ -265,6 +267,9 @@ public class Dag<N extends Lop>
 		
 		// do greedy grouping of operations
 		ArrayList<Instruction> inst = doGreedyGrouping(sb, node_v);
+		
+		// cleanup instruction (e.g., create packed rmvar instructions)
+		inst = cleanupInstructions(inst);
 		
 		return inst;
 
@@ -717,10 +722,8 @@ public class Dag<N extends Lop>
 		//send write lop to MR if (1) it is marked with exec type MR (based on its memory estimate), or
 		//(2) if the input lop is in MR and the write format allows to pack it into the same job (this does
 		//not apply to csv write because MR csvwrite is a separate MR job type)
-		if( node.getExecType() == ExecType.MR || (in.getExecType() == ExecType.MR && nodeFormat != Format.CSV ) )
-			return true;
-		else
-			return false;
+		return (node.getExecType() == ExecType.MR 
+			|| (in.getExecType() == ExecType.MR && nodeFormat != Format.CSV));
 	}
 	
 	/**
@@ -1491,65 +1494,12 @@ public class Dag<N extends Lop>
 								node.getInputs().get(6).getOutputParameters().getLabel(),
 								node.getOutputParameters().getLabel());
 					}
-					else if (node.getInputs().size() == 13) {
-						 // Used for im2col and reshape_col
-						 inst_string = node.getInstructions(
-						 		node.getInputs().get(0).getOutputParameters().getLabel(),
-						 		node.getInputs().get(1).getOutputParameters().getLabel(),
-						 		node.getInputs().get(2).getOutputParameters().getLabel(),
-						 		node.getInputs().get(3).getOutputParameters().getLabel(),
-						 		node.getInputs().get(4).getOutputParameters().getLabel(),
-						 		node.getInputs().get(5).getOutputParameters().getLabel(),
-						 		node.getInputs().get(6).getOutputParameters().getLabel(),
-						 		node.getInputs().get(7).getOutputParameters().getLabel(),
-						 		node.getInputs().get(8).getOutputParameters().getLabel(),
-						 		node.getInputs().get(9).getOutputParameters().getLabel(),
-						 		node.getInputs().get(10).getOutputParameters().getLabel(),
-						 		node.getInputs().get(11).getOutputParameters().getLabel(),
-						 		node.getInputs().get(12).getOutputParameters().getLabel(),
-						 		node.getOutputParameters().getLabel());
-					}
-					else if (node.getInputs().size() == 14) {
-						 // Used for pooling_backward
-						 inst_string = node.getInstructions(
-						 		node.getInputs().get(0).getOutputParameters().getLabel(),
-						 		node.getInputs().get(1).getOutputParameters().getLabel(),
-						 		node.getInputs().get(2).getOutputParameters().getLabel(),
-						 		node.getInputs().get(3).getOutputParameters().getLabel(),
-						 		node.getInputs().get(4).getOutputParameters().getLabel(),
-						 		node.getInputs().get(5).getOutputParameters().getLabel(),
-						 		node.getInputs().get(6).getOutputParameters().getLabel(),
-						 		node.getInputs().get(7).getOutputParameters().getLabel(),
-						 		node.getInputs().get(8).getOutputParameters().getLabel(),
-						 		node.getInputs().get(9).getOutputParameters().getLabel(),
-						 		node.getInputs().get(10).getOutputParameters().getLabel(),
-						 		node.getInputs().get(11).getOutputParameters().getLabel(),
-						 		node.getInputs().get(12).getOutputParameters().getLabel(),
-						 		node.getInputs().get(13).getOutputParameters().getLabel(),
-						 		node.getOutputParameters().getLabel());
-					}
-					else if (node.getInputs().size() == 15) {
-						 // Used for fused conv2d_bias_add
-						 inst_string = node.getInstructions(
-						 		node.getInputs().get(0).getOutputParameters().getLabel(),
-						 		node.getInputs().get(1).getOutputParameters().getLabel(),
-						 		node.getInputs().get(2).getOutputParameters().getLabel(),
-						 		node.getInputs().get(3).getOutputParameters().getLabel(),
-						 		node.getInputs().get(4).getOutputParameters().getLabel(),
-						 		node.getInputs().get(5).getOutputParameters().getLabel(),
-						 		node.getInputs().get(6).getOutputParameters().getLabel(),
-						 		node.getInputs().get(7).getOutputParameters().getLabel(),
-						 		node.getInputs().get(8).getOutputParameters().getLabel(),
-						 		node.getInputs().get(9).getOutputParameters().getLabel(),
-						 		node.getInputs().get(10).getOutputParameters().getLabel(),
-						 		node.getInputs().get(11).getOutputParameters().getLabel(),
-						 		node.getInputs().get(12).getOutputParameters().getLabel(),
-						 		node.getInputs().get(13).getOutputParameters().getLabel(),
-						 		node.getInputs().get(14).getOutputParameters().getLabel(),
-						 		node.getOutputParameters().getLabel());
-					}
 					else {
-						throw new LopsException(node.printErrorLocation() + "Node with " + node.getInputs().size() + " inputs is not supported in CP yet! \n");
+						String[] inputs = new String[node.getInputs().size()];
+						for( int j=0; j<node.getInputs().size(); j++ )
+							inputs[j] = node.getInputs().get(j).getOutputParameters().getLabel();
+						inst_string = node.getInstructions(inputs,
+								node.getOutputParameters().getLabel());
 					}
 				}
 				
@@ -1921,11 +1871,7 @@ public class Dag<N extends Lop>
 			}
 		}
 		
-		if( (tmpNode.getCompatibleJobs() & node.getCompatibleJobs()) > 0)
-			return true;
-		else
-			return false;
-			
+		return ( (tmpNode.getCompatibleJobs() & node.getCompatibleJobs()) > 0);
 	}
 	  
 	/**
@@ -2429,50 +2375,6 @@ public class Dag<N extends Lop>
 				
 				out.addLastInstruction(currInstr);
 			}
-			else if(node instanceof ParameterizedBuiltin 
-					&& ((ParameterizedBuiltin)node).getOp() == org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORM) {
-				
-				ParameterizedBuiltin pbi = (ParameterizedBuiltin)node;
-				Lop input = pbi.getNamedInput(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_DATA);
-				if(input.getDataType()== DataType.FRAME) {
-					
-					// Output of transform is in CSV format, which gets subsequently reblocked 
-					// TODO: change it to output binaryblock
-					
-					Data dataInput = (Data) input;
-					oparams.setFile_name(getNextUniqueFilename());
-					oparams.setLabel(getNextUniqueVarname(DataType.MATRIX));
-
-					// generate an instruction that creates a symbol table entry for the new variable in CSV format
-					Data delimLop = (Data) dataInput.getNamedInputLop(
-							DataExpression.DELIM_DELIMITER, DataExpression.DEFAULT_DELIM_DELIMITER);
-					
-					Instruction createvarInst = VariableCPInstruction.prepareCreateVariableInstruction(
-					        oparams.getLabel(), oparams.getFile_name(), true, 
-					        DataType.MATRIX, OutputInfo.outputInfoToString(OutputInfo.CSVOutputInfo),
-							new MatrixCharacteristics(oparams.getNumRows(), oparams.getNumCols(), -1, -1, oparams.getNnz()), oparams.getUpdateType(), 
-							false, delimLop.getStringValue(), true
-						);
-					
-					createvarInst.setLocation(node);
-					
-					out.addPreInstruction(createvarInst);
-
-					// temp file as well as the variable has to be deleted at the end
-					Instruction currInstr = VariableCPInstruction.prepareRemoveInstruction(oparams.getLabel());
-					
-					currInstr.setLocation(node);
-					
-					out.addLastInstruction(currInstr);
-
-					// finally, add the generated filename and variable name to the list of outputs
-					out.setFileName(oparams.getFile_name());
-					out.setVarName(oparams.getLabel());
-				}
-				else {
-					throw new LopsException("Input to transform() has an invalid type: " + input.getDataType() + ", it must be FRAME.");
-				}
-			}
 			else if(!(node instanceof FunctionCallCP)) //general case
 			{
 				// generate temporary filename and a variable name to hold the
@@ -2968,7 +2870,7 @@ public class Dag<N extends Lop>
 		 */
 		
 		// 
-		if ( jt != JobType.REBLOCK && jt != JobType.CSV_REBLOCK && jt != JobType.DATAGEN && jt != JobType.TRANSFORM) {
+		if ( jt != JobType.REBLOCK && jt != JobType.CSV_REBLOCK && jt != JobType.DATAGEN ) {
 			for (int i=0; i < inputInfos.size(); i++)
 				if ( inputInfos.get(i) == InputInfo.BinaryCellInputInfo || inputInfos.get(i) == InputInfo.TextCellInputInfo )
 					cellModeOverride = true;
@@ -3184,9 +3086,7 @@ public class Dag<N extends Lop>
 		}
 
 		if (node.getExecLocation() == ExecLocation.Data ) {
-			if ( ((Data)node).getFileFormatType() == FileFormatTypes.CSV 
-					&& !(node.getInputs().get(0) instanceof ParameterizedBuiltin 
-							&& ((ParameterizedBuiltin)node.getInputs().get(0)).getOp() == org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORM)) {
+			if ( ((Data)node).getFileFormatType() == FileFormatTypes.CSV ) {
 				// Generate write instruction, which goes into CSV_WRITE Job
 				int output_index = start_index[0];
 				shuffleInstructions.add(node.getInstructions(inputIndices.get(0), output_index));
@@ -3226,12 +3126,6 @@ public class Dag<N extends Lop>
 				break;
 				
 			case ParameterizedBuiltin:
-				if( ((ParameterizedBuiltin)node).getOp() == org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORM ) {
-					shuffleInstructions.add(node.getInstructions(output_index));
-					if(DMLScript.ENABLE_DEBUG_MODE) {
-						MRJobLineNumbers.add(node._beginLine);
-					}
-				}
 				break;
 				
 			/* Lop types that take two inputs */
@@ -4023,5 +3917,35 @@ public class Dag<N extends Lop>
 				return true;
 		}
 		return false;
+	}
+	
+	private static ArrayList<Instruction> cleanupInstructions(ArrayList<Instruction> insts) 
+		throws DMLRuntimeException 
+	{
+		ArrayList<Instruction> ret = new ArrayList<Instruction>();
+		ArrayList<String> currRmVar = new ArrayList<String>();
+		for( Instruction inst : insts ) {
+			if( inst instanceof VariableCPInstruction 
+				&& ((VariableCPInstruction)inst).isRemoveVariableNoFile() ) {
+				//collect all subsequent rmvar instructions
+				currRmVar.add(((VariableCPInstruction)inst).getInput1().getName());
+			}
+			else {
+				//construct packed rmvar instruction
+				if( !currRmVar.isEmpty() ) {
+					ret.add(VariableCPInstruction.prepareRemoveInstruction(
+						currRmVar.toArray(new String[0])));
+					currRmVar.clear();
+				}
+				//add other instruction
+				ret.add(inst);
+			}
+		}
+		//construct last packed rmvar instruction
+		if( !currRmVar.isEmpty() ) {
+			ret.add(VariableCPInstruction.prepareRemoveInstruction(
+				currRmVar.toArray(new String[0])));
+		}
+		return ret;
 	}
 }

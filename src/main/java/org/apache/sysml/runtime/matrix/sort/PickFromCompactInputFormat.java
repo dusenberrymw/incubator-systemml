@@ -40,7 +40,7 @@ import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
-
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
@@ -242,7 +242,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 			// check if the current part file needs to be processed
 	    	path = split.getPath();
 	    	totLength = split.getLength();
-	    	currentStream = FileSystem.get(job).open(path);
+	    	currentStream = IOUtilFunctions.getFileSystem(path, job).open(path);
 	    	currPart = getIndexInTheArray(path.getName());
 	    	
 	    	if ( currPart < beginPart || currPart > endPart ) {
@@ -342,7 +342,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 		
 		@Override
 		public void close() throws IOException {
-			currentStream.close();
+			IOUtilFunctions.closeSilently(currentStream);
 		}
 
 		@Override
@@ -394,9 +394,9 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 		public PickRecordReader(JobConf job, FileSplit split)
 			throws IOException
 		{
-			fs = FileSystem.get(job);
-	    	path = split.getPath();
-	    	currentStream = fs.open(path);
+			path = split.getPath();
+			fs = IOUtilFunctions.getFileSystem(path, job);
+			currentStream = fs.open(path);
 	    	int partIndex=getIndexInTheArray(path.getName());
 	    	String arrStr=job.get(SELECTED_POINTS_PREFIX+partIndex);
 	    	if(arrStr==null || arrStr.isEmpty()) {
@@ -449,7 +449,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 
 		@Override
 		public void close() throws IOException {
-			currentStream.close();			
+			IOUtilFunctions.closeSilently(currentStream);			
 		}
 
 		@Override

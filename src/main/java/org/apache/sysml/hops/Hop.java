@@ -21,6 +21,7 @@ package org.apache.sysml.hops;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -50,16 +51,10 @@ import org.apache.sysml.runtime.util.UtilFunctions;
 
 public abstract class Hop 
 {
-	
 	protected static final Log LOG =  LogFactory.getLog(Hop.class.getName());
 	
 	public static final long CPThreshold = 2000;
 
-	public enum VisitStatus {
-		DONE,
-		NOTVISITED
-	}
-	
 	/**
 	 * Optional hop interface, to be implemented by multi-threaded hops.
 	 */
@@ -75,7 +70,7 @@ public abstract class Hop
 	protected String _name;
 	protected DataType _dataType;
 	protected ValueType _valueType;
-	protected VisitStatus _visited = VisitStatus.NOTVISITED;
+	protected boolean _visited = false;
 	protected long _dim1 = -1;
 	protected long _dim2 = -1;
 	protected long _rows_in_block = -1;
@@ -83,8 +78,8 @@ public abstract class Hop
 	protected long _nnz = -1;
 	protected UpdateType _updateType = UpdateType.COPY;
 
-	protected ArrayList<Hop> _parent = new ArrayList<Hop>();
-	protected ArrayList<Hop> _input = new ArrayList<Hop>();
+	protected ArrayList<Hop> _parent = new ArrayList<>();
+	protected ArrayList<Hop> _input = new ArrayList<>();
 
 	protected ExecType _etype = null; //currently used exec type
 	protected ExecType _etypeForced = null; //exec type forced via platform or external optimizer
@@ -97,6 +92,7 @@ public abstract class Hop
 	protected double _memEstimate = OptimizerUtils.INVALID_SIZE;
 	protected double _processingMemEstimate = 0;
 	protected double _spBroadcastMemEstimate = 0;
+	protected boolean _validCPSizeEstimate = false;
 	
 	// indicates if there are unknowns during compilation 
 	// (in that case re-complication ensures robustness and efficiency)
@@ -139,6 +135,18 @@ public abstract class Hop
 	public long getHopID() {
 		return _ID;
 	}
+
+	/**
+	 * Check whether this Hop has a correct number of inputs.
+	 *
+	 * (Some Hops can have a variable number of inputs, such as DataOp, DataGenOp, ParameterizedBuiltinOp,
+	 * ReorgOp, TernaryOp, QuaternaryOp, MultipleOp, ConvolutionOp, and SpoofFusedOp.)
+	 *
+	 * Parameterized Hops (such as DataOp) can check that the number of parameters matches the number of inputs.
+	 *
+	 * @throws HopsException if this Hop has an illegal number of inputs (a kind of Illegal State)
+	 */
+	public abstract void checkArity() throws HopsException;
 	
 	public ExecType getExecType()
 	{
@@ -203,10 +211,10 @@ public abstract class Hop
 			//Step 2: check valid output and input sizes for cp (<16GB for DENSE)
 			//(if the memory estimate is smaller than max_numcells we are guaranteed to have it in sparse representation)
 			invalid |= !(  OptimizerUtils.isValidCPMatrixSize(_dim1, _dim2, OptimizerUtils.getSparsity(_dim1, _dim2, _nnz))
-					    || getOutputMemEstimate() < OptimizerUtils.MAX_NUMCELLS_CP_DENSE );
+					    || getOutputMemEstimate() < 8*OptimizerUtils.MAX_NUMCELLS_CP_DENSE || _validCPSizeEstimate );
 			for( Hop in : getInput() )
 				invalid |= !(   OptimizerUtils.isValidCPMatrixSize(in._dim1, in._dim2, OptimizerUtils.getSparsity(in._dim1, in._dim2, in._nnz))
-						     || in.getOutputMemEstimate() < OptimizerUtils.MAX_NUMCELLS_CP_DENSE);
+						     || in.getOutputMemEstimate() < 8*OptimizerUtils.MAX_NUMCELLS_CP_DENSE || in._validCPSizeEstimate);
 			
 			//force exec type mr if necessary
 			if( invalid ) { 
@@ -293,11 +301,9 @@ public abstract class Hop
 			
 			try
 			{
-				if(    (this instanceof DataOp  // CSV
-							&& ((DataOp)this).getDataOpType() == DataOpTypes.PERSISTENTREAD
-							&& ((DataOp)this).getInputFormatType() == FileFormatTypes.CSV ) 
-					|| (this instanceof ParameterizedBuiltinOp 
-							&& ((ParameterizedBuiltinOp)this).getOp() == ParamBuiltinOp.TRANSFORM) )
+				if( this instanceof DataOp  // CSV
+					&& ((DataOp)this).getDataOpType() == DataOpTypes.PERSISTENTREAD
+					&& ((DataOp)this).getInputFormatType() == FileFormatTypes.CSV  )
 				{
 					reblock = new CSVReBlock( input, getRowsInBlock(), getColsInBlock(), 
 							getDataType(), getValueType(), et);
@@ -318,7 +324,6 @@ public abstract class Hop
 		}
 	}
 
-	@SuppressWarnings("unused") //see CHECKPOINT_SPARSE_CSR
 	private void constructAndSetCheckpointLopIfRequired() 
 		throws HopsException
 	{
@@ -350,11 +355,13 @@ public abstract class Hop
 				//investigate need for serialized storage of large sparse matrices
 				//(compile- instead of runtime-level for better debugging)
 				boolean serializedStorage = false;
-				if( getDataType()==DataType.MATRIX && dimsKnown(true) && !Checkpoint.CHECKPOINT_SPARSE_CSR ) {
+				if( getDataType()==DataType.MATRIX && dimsKnown(true) ) {
 					double matrixPSize = OptimizerUtils.estimatePartitionedSizeExactSparsity(_dim1, _dim2, _rows_in_block, _cols_in_block, _nnz);
 					double dataCache = SparkExecutionContext.getDataMemoryBudget(true, true);
-					serializedStorage = (MatrixBlock.evalSparseFormatInMemory(_dim1, _dim2, _nnz)
-							             && matrixPSize > dataCache ); //sparse in-memory does not fit in agg mem 
+					serializedStorage = MatrixBlock.evalSparseFormatInMemory(_dim1, _dim2, _nnz)
+						&& matrixPSize > dataCache //sparse in-memory does not fit in agg mem 
+						&& (OptimizerUtils.getSparsity(_dim1, _dim2, _nnz) < MatrixBlock.ULTRA_SPARSITY_TURN_POINT
+							|| !Checkpoint.CHECKPOINT_SPARSE_CSR ); //ultra-sparse or sparse w/o csr
 				}
 				else if( !dimsKnown(true) ) {
 					setRequiresRecompile();
@@ -617,13 +624,13 @@ public abstract class Hop
 					//nnz always exactly known (see dimsKnown(true))
 					_outputMemEstimate = computeOutputMemEstimate( _dim1, _dim2, _nnz );
 				}
-				//1b) infer output statistics and mem estimate based on these statistics
+				//1b) infer output statistics and mem estimate based on worst-case statistics
 				else if( memo.hasInputStatistics(this) )
 				{
 					//infer the output stats
 					wstats = inferOutputCharacteristics(memo);
 					
-					if( wstats != null ) {
+					if( wstats != null && wstats[0] >= 0 && wstats[1] >= 0 ) {
 						//use worst case characteristics to estimate mem
 						long lnnz = ((wstats[2]>=0)?wstats[2]:wstats[0]*wstats[1]);
 						_outputMemEstimate = computeOutputMemEstimate( wstats[0], wstats[1], lnnz );
@@ -687,9 +694,13 @@ public abstract class Hop
 		
 		////////
 		//Step 3) Compute final hop memory estimate  
-			
+		
 		//final estimate (sum of inputs/intermediates/output)
 		_memEstimate = getInputOutputSize();
+		
+		//update optional valid cp size estimate (based on worst-case dimensions)
+		_validCPSizeEstimate = (wstats!=null) ? OptimizerUtils.isValidCPMatrixSize(
+			wstats[0], wstats[1], OptimizerUtils.getSparsity(wstats[0], wstats[1], wstats[2])) : false;
 	}
 
 	
@@ -731,12 +742,12 @@ public abstract class Hop
 	 * @param memo memory table
 	 */
 	public void refreshMemEstimates( MemoTable memo ) {
-		if (getVisited() == VisitStatus.DONE)
+		if( isVisited() )
 			return;
-		for (Hop h : this.getInput())
+		for( Hop h : this.getInput() )
 			h.refreshMemEstimates( memo );
-		this.computeMemEstimate( memo );
-		this.setVisited(VisitStatus.DONE);
+		computeMemEstimate( memo );
+		setVisited();
 	}
 
 	/**
@@ -788,6 +799,11 @@ public abstract class Hop
 
 	public ArrayList<Hop> getInput() {
 		return _input;
+	}
+	
+	public void addInput( Hop h ) {
+		_input.add(h);
+		h._parent.add(this);
 	}
 
 	public long getRowsInBlock() {
@@ -856,22 +872,38 @@ public abstract class Hop
 				&& (_dim1 > 0 || _dim2 > 0)) );
 	}
 	
-	public static void resetVisitStatus( ArrayList<Hop> hops )
-	{
+	public static void resetVisitStatus( ArrayList<Hop> hops ) {
 		if( hops != null )
 			for( Hop hopRoot : hops )
 				hopRoot.resetVisitStatus();
 	}
 	
-	public void resetVisitStatus() 
-	{
-		if ( getVisited() == Hop.VisitStatus.NOTVISITED )
+	public static void resetVisitStatus( ArrayList<Hop> hops, boolean force ) {
+		if( !force )
+			resetVisitStatus(hops);
+		else {
+			HashSet<Long> memo = new HashSet<Long>();
+			if( hops != null )
+				for( Hop hopRoot : hops )
+					hopRoot.resetVisitStatusForced(memo);
+		}
+	}
+	
+	public void resetVisitStatus()  {
+		if( !isVisited() )
 			return;
-		
-		for (Hop h : this.getInput())
-			h.resetVisitStatus();
-		
-		setVisited(Hop.VisitStatus.NOTVISITED);
+		for( Hop h : getInput() )
+			h.resetVisitStatus();		
+		setVisited(false);
+	}
+	
+	public void resetVisitStatusForced(HashSet<Long> memo) {
+		if( memo.contains(getHopID()) )
+			return;
+		for( Hop h : getInput() )
+			h.resetVisitStatusForced(memo);
+		setVisited(false);
+		memo.add(getHopID());
 	}
 
 	public static void resetRecompilationFlag( ArrayList<Hop> hops, ExecType et )
@@ -889,7 +921,7 @@ public abstract class Hop
 	
 	private void resetRecompilationFlag( ExecType et ) 
 	{
-		if( getVisited() == VisitStatus.DONE )
+		if( isVisited() )
 			return;
 		
 		//process child hops
@@ -900,28 +932,7 @@ public abstract class Hop
 		if( et == null || getExecType() == et || getExecType()==null )
 			_requiresRecompile = false;
 		
-		this.setVisited(VisitStatus.DONE);
-	}
-
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()) {
-			StringBuilder s = new StringBuilder(""); 
-			s.append(getClass().getSimpleName() + " " + getHopID() + "\n");
-			s.append("  Label: " + getName() + "; DataType: " + _dataType + "; ValueType: " + _valueType + "\n");
-			s.append("  Parent: ");
-			for (Hop h : getParent()) {
-				s.append(h.hashCode() + "; ");
-			}
-			;
-			s.append("\n  Input: ");
-			for (Hop h : getInput()) {
-				s.append(h.getHopID() + "; ");
-			}
-			
-			s.append("\n  dims [" + _dim1 + "," + _dim2 + "] blk [" + _rows_in_block + "," + _cols_in_block + "] nnz: " + _nnz + " UpdateInPlace: " + _updateType);
-			s.append("  MemEstimate = Out " + (_outputMemEstimate/1024/1024) + " MB, In&Out " + (_memEstimate/1024/1024) + " MB" );
-			LOG.debug(s.toString());
-		}
+		setVisited();
 	}
 
 	public long getDim1() {
@@ -955,7 +966,7 @@ public abstract class Hop
 		_lops = lops;
 	}
 
-	public VisitStatus getVisited() {
+	public boolean isVisited() {
 		return _visited;
 	}
 
@@ -967,8 +978,12 @@ public abstract class Hop
 		_dataType = dt;
 	}
 
-	public void setVisited(VisitStatus visited) {
-		_visited = visited;
+	public void setVisited() {
+		setVisited(true);
+	}
+	
+	public void setVisited(boolean flag) {
+		_visited = flag;
 	}
 
 	public void setName(String _name) {
@@ -1026,7 +1041,7 @@ public abstract class Hop
 	};
 	
 	// Operations that require a variable number of operands
-	public enum MultipleOperandOperation {
+	public enum MultiInputOp {
 		PRINTF
 	}
 	
@@ -1045,7 +1060,7 @@ public abstract class Hop
 	public enum ConvOp {
 		MAX_POOLING, MAX_POOLING_BACKWARD,
 		DIRECT_CONV2D, DIRECT_CONV2D_BACKWARD_FILTER, DIRECT_CONV2D_BACKWARD_DATA,
-		BIAS_ADD
+		BIAS_ADD, BIAS_MULTIPLY
 	};
 	
 	public enum DataGenMethod {
@@ -1054,7 +1069,7 @@ public abstract class Hop
 
 	public enum ParamBuiltinOp {
 		INVALID, CDF, INVCDF, GROUPEDAGG, RMEMPTY, REPLACE, REXPAND, 
-		TRANSFORM, TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMMETA,
+		TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMMETA,
 		TOSTRING
 	};
 
@@ -1112,6 +1127,7 @@ public abstract class Hop
 		HopsConv2Lops.put(ConvOp.MAX_POOLING_BACKWARD, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.MAX_POOLING_BACKWARD);
 		HopsConv2Lops.put(ConvOp.DIRECT_CONV2D, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.DIRECT_CONV2D);
 		HopsConv2Lops.put(ConvOp.BIAS_ADD, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.BIAS_ADD);
+		HopsConv2Lops.put(ConvOp.BIAS_MULTIPLY, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.BIAS_MULTIPLY);
 		HopsConv2Lops.put(ConvOp.DIRECT_CONV2D_BACKWARD_FILTER, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.DIRECT_CONV2D_BACKWARD_FILTER);
 		HopsConv2Lops.put(ConvOp.DIRECT_CONV2D_BACKWARD_DATA, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.DIRECT_CONV2D_BACKWARD_DATA);
 	}
@@ -1270,10 +1286,10 @@ public abstract class Hop
 	 * constructLops() method that is used to construct the Lops that correspond
 	 * to a Hop.
 	 */
-	protected static final HashMap<MultipleOperandOperation, MultipleCP.OperationType> MultipleOperandOperationHopTypeToLopType;
+	protected static final HashMap<MultiInputOp, MultipleCP.OperationType> MultipleOperandOperationHopTypeToLopType;
 	static {
-		MultipleOperandOperationHopTypeToLopType = new HashMap<MultipleOperandOperation, MultipleCP.OperationType>();
-		MultipleOperandOperationHopTypeToLopType.put(MultipleOperandOperation.PRINTF, MultipleCP.OperationType.PRINTF);
+		MultipleOperandOperationHopTypeToLopType = new HashMap<MultiInputOp, MultipleCP.OperationType>();
+		MultipleOperandOperationHopTypeToLopType.put(MultiInputOp.PRINTF, MultipleCP.OperationType.PRINTF);
 	}
 
 	protected static final HashMap<Hop.OpOp1, String> HopsOpOp12String;
@@ -1313,7 +1329,6 @@ public abstract class Hop
 		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.RMEMPTY, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.RMEMPTY);
 		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.REPLACE, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.REPLACE);
 		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.REXPAND, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.REXPAND);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORM, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORM);
 		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMAPPLY, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMAPPLY);		
 		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMDECODE, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMDECODE);
 		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMMETA, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMMETA);

@@ -74,13 +74,17 @@ public class IndexingOp extends Hop
 		setRowLowerEqualsUpper(passedRowsLEU);
 		setColLowerEqualsUpper(passedColsLEU);
 	}
-	
-	
-	public boolean getRowLowerEqualsUpper(){
+
+	@Override
+	public void checkArity() throws HopsException {
+		HopsException.check(_input.size() == 5, this, "should have 5 inputs but has %d inputs", _input.size());
+	}
+
+	public boolean isRowLowerEqualsUpper(){
 		return _rowLowerEqualsUpper;
 	}
 	
-	public boolean getColLowerEqualsUpper() {
+	public boolean isColLowerEqualsUpper() {
 		return _colLowerEqualsUpper;
 	}
 	
@@ -192,16 +196,6 @@ public class IndexingOp extends Hop
 		String s = new String("");
 		s += OPSTRING;
 		return s;
-	}
-
-	public void printMe() throws HopsException {
-		if (getVisited() != VisitStatus.DONE) {
-			super.printMe();
-			for (Hop h : getInput()) {
-				h.printMe();
-			}
-		}
-		setVisited(VisitStatus.DONE);
 	}
 	
 	@Override
@@ -406,6 +400,10 @@ public class IndexingOp extends Hop
 		Hop input3 = getInput().get(2); //inpRowU
 		Hop input4 = getInput().get(3); //inpColL
 		Hop input5 = getInput().get(4); //inpColU
+		
+		//update single row/column flags (depends on CSE)
+		_rowLowerEqualsUpper = (input2 == input3);
+		_colLowerEqualsUpper = (input4 == input5);
 		
 		//parse input information
 		boolean allRows = 

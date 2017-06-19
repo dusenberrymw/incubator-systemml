@@ -25,10 +25,15 @@ nvcc -ptx -arch=sm_30 SystemML.cu
 
 #include <cfloat>
 
-// dim => rlen (Assumption: rlen == clen)
-// N = length of dense array
+
+/**
+ * Does a copy of upper to lower triangle of the given matrix
+ * @param ret the input and output array allocated on the GPU
+ * @param dim the number of rows of the square matrix ret
+ * @param N total number of elements of the matrix
+ */
 extern "C"
-__global__ void copyUpperToLowerTriangleDense(double* ret, int dim, int N) {
+__global__ void copy_u2l_dense(double* ret, int dim, int N) {
 	int ix = blockIdx.x * blockDim.x + threadIdx.x;
 	int iy = blockIdx.y * blockDim.y + threadIdx.y;
 	int id_dest = iy * dim + ix;
@@ -71,26 +76,6 @@ __forceinline__ __device__ double binaryOp(double x, double y, int op) {
 }
 
 extern "C"
-__global__ void dense_matrix_set(double* A,  double scalar, int rlen, int clen) {
-	int ix = blockIdx.x * blockDim.x + threadIdx.x;
-	int iy = blockIdx.y * blockDim.y + threadIdx.y;
-	int index = ix * clen + iy;
-	if(index < rlen*clen) {
-		A[index] = scalar;
-	}
-}
-
-extern "C"
-__global__ void dense_matrix_copy(double* A,  double* ret, int rlen, int clen) {
-	int ix = blockIdx.x * blockDim.x + threadIdx.x;
-	int iy = blockIdx.y * blockDim.y + threadIdx.y;
-	int index = ix * clen + iy;
-	if(ix < rlen && iy < clen) {
-		ret[index] = A[index];
-	}
-}
-
-extern "C"
 __global__ void relu(double* A,  double* ret, int rlen, int clen) {
 	int ix = blockIdx.x * blockDim.x + threadIdx.x;
 	int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -102,7 +87,7 @@ __global__ void relu(double* A,  double* ret, int rlen, int clen) {
 
 // This method computes the backpropagation errors for previous layer of relu operation
 extern "C"
-__global__ void reluBackward(double* X,  double* dout, double* ret, int rlen, int clen) {
+__global__ void relu_backward(double* X,  double* dout, double* ret, int rlen, int clen) {
 	int ix = blockIdx.x * blockDim.x + threadIdx.x;
 	int iy = blockIdx.y * blockDim.y + threadIdx.y;
 	if(ix < rlen && iy < clen) {
@@ -116,7 +101,7 @@ __global__ void reluBackward(double* X,  double* dout, double* ret, int rlen, in
 // output = input + matrix(bias %*% ones, rows=1, cols=F*Hout*Wout)
 // This operation is often followed by conv2d and hence we have introduced bias_add(input, bias) built-in function
 extern "C"
-__global__ void biasAdd(double* input,  double* bias, double* ret, int rlen, int clen, int PQ) {
+__global__ void bias_add(double* input,  double* bias, double* ret, int rlen, int clen, int PQ) {
 	int ix = blockIdx.x * blockDim.x + threadIdx.x;
 	int iy = blockIdx.y * blockDim.y + threadIdx.y;
 	if(ix < rlen && iy < clen) {
@@ -126,9 +111,37 @@ __global__ void biasAdd(double* input,  double* bias, double* ret, int rlen, int
 	}
 }
 
+// Performs the operation "ret <- A + alpha*B", where B is a vector
+extern "C"
+__global__ void daxpy_matrix_vector(double* A,  double* B, double alpha, double* ret, int rlenA, int clenA, int rlenB, int clenB) {
+	int ix = blockIdx.x * blockDim.x + threadIdx.x;
+	int iy = blockIdx.y * blockDim.y + threadIdx.y;
+	if(ix < rlenA && iy < clenA) {
+		int index = ix * clenA + iy;
+		if(rlenB == 1) {
+			ret[index] = A[index] + alpha*B[iy];
+		}
+		else {
+			ret[index] = A[index] + alpha*B[ix];
+		}
+	}
+}
+
+// Performs similar operation as bias_add except elementwise multiplication instead of add
+extern "C"
+__global__ void bias_multiply(double* input,  double* bias, double* ret, int rlen, int clen, int PQ) {
+	int ix = blockIdx.x * blockDim.x + threadIdx.x;
+	int iy = blockIdx.y * blockDim.y + threadIdx.y;
+	if(ix < rlen && iy < clen) {
+		int index = ix * clen + iy;
+		int biasIndex = iy / PQ;
+		ret[index] = input[index] * bias[biasIndex];
+	}
+}
+
 // Compares the value and set
 extern "C"
-__global__ void compareAndSet(double* A,  double* ret, int rlen, int clen, double compareVal, double tol, double ifEqualsVal, double ifLessThanVal, double ifGreaterThanVal) {
+__global__ void compare_and_set(double* A,  double* ret, int rlen, int clen, double compareVal, double tol, double ifEqualsVal, double ifLessThanVal, double ifGreaterThanVal) {
 	int ix = blockIdx.x * blockDim.x + threadIdx.x;
 	int iy = blockIdx.y * blockDim.y + threadIdx.y;
 	int index = ix * clen + iy;
@@ -641,5 +654,192 @@ __global__ void matrix_exp(double *A, double *C, unsigned int size) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < size){
         C[index] = exp(A[index]);
+    }
+}
+
+/**
+ * Do an sqrt over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_sqrt(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = sqrt(A[index]);
+    }
+}
+
+/**
+ * Do an round over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_round(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = (double)llround(A[index]);
+    }
+}
+
+/**
+ * Do an abs over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_abs(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = (double)fabs(A[index]);
+    }
+}
+
+/**
+ * Do an log over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_log(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = log(A[index]);
+    }
+}
+
+/**
+ * Do an floor over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_floor(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = floor(A[index]);
+    }
+}
+
+/**
+ * Do an ceil over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_ceil(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = ceil(A[index]);
+    }
+}
+
+/**
+ * Do an sin over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_sin(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = sin(A[index]);
+    }
+}
+
+/**
+ * Do an cos over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_cos(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = cos(A[index]);
+    }
+}
+
+/**
+ * Do an tan over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_tan(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = tan(A[index]);
+    }
+}
+
+/**
+ * Do an asin over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_asin(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = asin(A[index]);
+    }
+}
+
+/**
+ * Do an acos over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_acos(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = acos(A[index]);
+    }
+}
+
+/**
+ * Do an atan over all the elements of a matrix
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_atan(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        C[index] = atan(A[index]);
+    }
+}
+
+/**
+ * Do an sign over all the elements of a matrix
+ * Assign -1, 0 or 1 depending on the element being negative, 0 or positive
+ * @param A the input matrix (of length = size)
+ * @param C the pre-allocated output matrix (of length = size)
+ * @param siz the length of the input and output matrices
+ */
+extern "C"
+__global__ void matrix_sign(double *A, double *C, unsigned int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size){
+        if (A[index] == 0.0) {
+            C[index] = 0.0;
+        } else {
+            C[index] = copysign(1.0, A[index]);
+        }
     }
 }

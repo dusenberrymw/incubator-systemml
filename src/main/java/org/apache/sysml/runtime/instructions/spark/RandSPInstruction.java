@@ -24,11 +24,12 @@ import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.PrimitiveIterator;
 import java.util.Random;
+import java.util.stream.LongStream;
 
 import org.apache.commons.math3.distribution.PoissonDistribution;
 import org.apache.commons.math3.random.Well1024a;
-import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.api.java.JavaPairRDD;
@@ -42,7 +43,6 @@ import scala.Tuple2;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
-import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.DataGenOp;
 import org.apache.sysml.hops.Hop.DataGenMethod;
 import org.apache.sysml.hops.OptimizerUtils;
@@ -353,11 +353,12 @@ public class RandSPInstruction extends UnarySPInstruction
 		//step 3: seed generation 
 		JavaPairRDD<MatrixIndexes, Tuple2<Long, Long>> seedsRDD = null;
 		Well1024a bigrand = LibMatrixDatagen.setupSeedsForRand(lSeed);
-		long[] nnz = LibMatrixDatagen.computeNNZperBlock(rows, cols, rowsInBlock, colsInBlock, sparsity);
+		LongStream nnz = LibMatrixDatagen.computeNNZperBlock(rows, cols, rowsInBlock, colsInBlock, sparsity);
+		PrimitiveIterator.OfLong nnzIter = nnz.iterator();
 		double totalSize = OptimizerUtils.estimatePartitionedSizeExactSparsity( rows, cols, rowsInBlock, 
 			colsInBlock, rows*cols*sparsity); //overestimate for on disk, ensures hdfs block per partition
 		double hdfsBlkSize = InfrastructureAnalyzer.getHDFSBlockSize();
-		long numBlocks = nnz.length;
+		long numBlocks = new MatrixCharacteristics(rows, cols, rowsInBlock, colsInBlock).getNumBlocks();
 		long numColBlocks = (long)Math.ceil((double)cols/(double)colsInBlock);
 				
 		//a) in-memory seed rdd construction 
@@ -371,7 +372,7 @@ public class RandSPInstruction extends UnarySPInstruction
 				MatrixIndexes indx = new MatrixIndexes(r, c);
 				Long seedForBlock = bigrand.nextLong();
 				seeds.add(new Tuple2<MatrixIndexes, Tuple2<Long, Long>>(indx, 
-						new Tuple2<Long, Long>(seedForBlock, nnz[(int)i])));
+						new Tuple2<Long, Long>(seedForBlock, nnzIter.nextLong())));
 			}
 			
 			//for load balancing: degree of parallelism such that ~128MB per partition
@@ -383,13 +384,12 @@ public class RandSPInstruction extends UnarySPInstruction
 		//b) file-based seed rdd construction (for robustness wrt large number of blocks)
 		else
 		{
-			String path = LibMatrixDatagen.generateUniqueSeedPath(dir);
-			
+			Path path = new Path(LibMatrixDatagen.generateUniqueSeedPath(dir));
+			PrintWriter pw = null;
 			try
 			{
-				FileSystem fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
-				FSDataOutputStream fsOut = fs.create(new Path(path));
-				PrintWriter pw = new PrintWriter(fsOut);
+				FileSystem fs = IOUtilFunctions.getFileSystem(path);
+				pw = new PrintWriter(fs.create(path));
 				StringBuilder sb = new StringBuilder();
 				for( long i=0; i<numBlocks; i++ ) {
 					sb.append(1 + i/numColBlocks);
@@ -398,15 +398,16 @@ public class RandSPInstruction extends UnarySPInstruction
 					sb.append(',');
 					sb.append(bigrand.nextLong());
 					sb.append(',');
-					sb.append(nnz[(int)i]);
+					sb.append(nnzIter.nextLong());
 					pw.println(sb.toString());
 					sb.setLength(0);
 				}
-				pw.close();
-				fsOut.close();
 			}
 			catch( IOException ex ) {
 				throw new DMLRuntimeException(ex);
+			}
+			finally {
+				IOUtilFunctions.closeSilently(pw);
 			}
 			
 			//for load balancing: degree of parallelism such that ~128MB per partition
@@ -414,7 +415,7 @@ public class RandSPInstruction extends UnarySPInstruction
 			
 			//create seeds rdd 
 			seedsRDD = sec.getSparkContext()
-					.textFile(path, numPartitions)
+					.textFile(path.toString(), numPartitions)
 					.mapToPair(new ExtractSeedTuple());
 		}
 		
@@ -474,22 +475,22 @@ public class RandSPInstruction extends UnarySPInstruction
 		//b) file-based offset rdd construction (for robustness wrt large number of blocks)
 		else
 		{
-			String path = LibMatrixDatagen.generateUniqueSeedPath(dir);
+			Path path = new Path(LibMatrixDatagen.generateUniqueSeedPath(dir));
 			
-			try
-			{
-				FileSystem fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
-				FSDataOutputStream fsOut = fs.create(new Path(path));
-				PrintWriter pw = new PrintWriter(fsOut);
+			PrintWriter pw = null;
+			try {
+				FileSystem fs = IOUtilFunctions.getFileSystem(path);
+				pw = new PrintWriter(fs.create(path));
 				for( long i=0; i<numBlocks; i++ ) {
 					double off = seq_from + seq_incr*i*rowsInBlock;
 					pw.println(off);
 				}
-				pw.close();
-				fsOut.close();
 			}
 			catch( IOException ex ) {
 				throw new DMLRuntimeException(ex);
+			}
+			finally {
+				IOUtilFunctions.closeSilently(pw);
 			}
 			
 			//for load balancing: degree of parallelism such that ~128MB per partition
@@ -497,7 +498,7 @@ public class RandSPInstruction extends UnarySPInstruction
 			
 			//create seeds rdd 
 			offsetsRDD = sec.getSparkContext()
-					.textFile(path, numPartitions)
+					.textFile(path.toString(), numPartitions)
 					.map(new ExtractOffsetTuple());
 		}
 		
@@ -795,7 +796,7 @@ public class RandSPInstruction extends UnarySPInstruction
 					_pdf, lrlen, lclen, lrlen, lclen,   
 					_sparsity, _min, _max, _pdfParams );
 			
-			blk.randOperationsInPlace(rgen, new long[]{blockNNZ}, null, seed);
+			blk.randOperationsInPlace(rgen, LongStream.of(blockNNZ), null, seed);
 
 			return new Tuple2<MatrixIndexes, MatrixBlock>(kv._1, blk);
 		}

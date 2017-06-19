@@ -111,6 +111,11 @@ public class BinaryOp extends Hop
 		refreshSizeInformation();
 	}
 
+	@Override
+	public void checkArity() throws HopsException {
+		HopsException.check(_input.size() == 2, this, "should have arity 2 but has arity %d", _input.size());
+	}
+
 	public OpOp2 getOp() {
 		return op;
 	}
@@ -592,7 +597,7 @@ public class BinaryOp extends Hop
 			if ( et == ExecType.CP ) 
 			{
 				if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET) 
-						&& (op == OpOp2.MULT || op == OpOp2.PLUS || op == OpOp2.MINUS || op == OpOp2.DIV || op == OpOp2.POW)) {
+						&& (op == OpOp2.MULT || op == OpOp2.PLUS || op == OpOp2.MINUS || op == OpOp2.DIV || op == OpOp2.POW || op == OpOp2.SOLVE)) {
 					et = ExecType.GPU;
 				}
 				
@@ -756,20 +761,6 @@ public class BinaryOp extends Hop
 		return s;
 	}
 
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + op );
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-				;
-			}
-			setVisited(VisitStatus.DONE);
-		}
-	}
-
 	@Override
 	protected double computeOutputMemEstimate( long dim1, long dim2, long nnz )
 	{		
@@ -858,7 +849,7 @@ public class BinaryOp extends Hop
 			if( ldim1 > 0 || ldim2 > 0 || lnnz >= 0 )
 				return new long[]{ldim1, ldim2, lnnz};
 		}
-		else if( op== OpOp2.CBIND ) {
+		else if( op == OpOp2.RBIND ) {
 			long ldim1 = -1, ldim2 = -1, lnnz = -1;
 			
 			if( mc[0].colsKnown() || mc[1].colsKnown() )

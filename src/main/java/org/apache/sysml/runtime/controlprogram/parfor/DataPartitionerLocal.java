@@ -42,11 +42,12 @@ import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.util.Cell;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.controlprogram.parfor.util.StagingFileUtils;
-import org.apache.sysml.runtime.io.MatrixReader;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.IJV;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -77,7 +78,6 @@ import org.apache.sysml.runtime.util.LocalFileUtils;
  */
 public class DataPartitionerLocal extends DataPartitioner
 {
-	
 	private static final boolean PARALLEL = true; 
 	
 	private IDSequence _seq = null;
@@ -93,13 +93,12 @@ public class DataPartitionerLocal extends DataPartitioner
 	 * @param par -1 for serial otherwise number of threads, can be ignored by implementation
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public DataPartitionerLocal(PDataPartitionFormat dpf, int n, int par) 
+	public DataPartitionerLocal(PartitionFormat dpf, int par) 
 		throws DMLRuntimeException 
 	{
-		super(dpf, n);
+		super(dpf._dpf, dpf._N);
 		
-		//TODO
-		if( dpf == PDataPartitionFormat.ROW_BLOCK_WISE_N || dpf == PDataPartitionFormat.COLUMN_BLOCK_WISE_N  )
+		if( dpf.isBlockwise() )
 			throw new DMLRuntimeException("Data partitioning formt '"+dpf+"' not supported by DataPartitionerLocal" );
 		
 		_seq = new IDSequence();
@@ -184,10 +183,8 @@ public class DataPartitionerLocal extends DataPartitioner
 						buffer.clear();
 					}
 				}
-				finally
-				{
-					if( reader != null )
-						reader.close();
+				finally {
+					IOUtilFunctions.closeSilently(reader);
 				}
 			}
 
@@ -241,14 +238,14 @@ public class DataPartitionerLocal extends DataPartitioner
 			//check and add input path
 			JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
 			Path path = new Path(fname);
-			FileSystem fs = FileSystem.get(job);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 			
 			//prepare sequence file reader, and write to local staging area	
 			LinkedList<Cell> buffer = new LinkedList<Cell>();
 			MatrixIndexes key = new MatrixIndexes();
 			MatrixCell value = new MatrixCell();
 	
-			for( Path lpath : MatrixReader.getSequenceFilePaths(fs, path) )
+			for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) )
 			{
 				SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
 				try
@@ -274,10 +271,8 @@ public class DataPartitionerLocal extends DataPartitioner
 						buffer.clear();
 					}
 				}
-				finally
-				{
-					if( reader != null )
-						reader.close();
+				finally {
+					IOUtilFunctions.closeSilently(reader);
 				}
 			}
 			
@@ -331,13 +326,13 @@ public class DataPartitionerLocal extends DataPartitioner
 			//check and add input path
 			JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
 			Path path = new Path(fname);
-			FileSystem fs = FileSystem.get(job);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 			
 			//prepare sequence file reader, and write to local staging area
 			MatrixIndexes key = new MatrixIndexes(); 
 			MatrixBlock value = new MatrixBlock();
 			
-			for(Path lpath : MatrixReader.getSequenceFilePaths(fs, path) )
+			for(Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) )
 			{
 				SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
 				try
@@ -359,10 +354,8 @@ public class DataPartitionerLocal extends DataPartitioner
 					    appendBlockToStagingArea(fnameStaging, value, row_offset, col_offset, brlen, bclen);
 					}
 				}
-				finally
-				{
-					if( reader != null )
-						reader.close();
+				finally {
+					IOUtilFunctions.closeSilently(reader);
 				}
 			}
 
@@ -406,7 +399,7 @@ public class DataPartitionerLocal extends DataPartitioner
 			//check and add input path
 			JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
 			Path path = new Path(fname);
-			FileSystem fs = FileSystem.get(job);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 			
 			//prepare sequence file reader, and write to local staging area
 			MatrixIndexes key = new MatrixIndexes(); 
@@ -414,7 +407,7 @@ public class DataPartitionerLocal extends DataPartitioner
 			
 			LinkedList<Cell> buffer = new LinkedList<Cell>();
 			
-			for(Path lpath : MatrixReader.getSequenceFilePaths(fs, path) )
+			for(Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) )
 			{
 				SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
 				try
@@ -466,10 +459,8 @@ public class DataPartitionerLocal extends DataPartitioner
 						buffer.clear();
 					}
 				}
-				finally
-				{
-					if( reader != null )
-						reader.close();
+				finally {
+					IOUtilFunctions.closeSilently(reader);
 				}
 			}
 
@@ -609,8 +600,8 @@ public class DataPartitionerLocal extends DataPartitioner
 		throws IOException
 	{
 		long key = getKeyFromFilePath(lpdir);
-		FileSystem fs = FileSystem.get(job);
 		Path path =  new Path(dir+"/"+key);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		SequenceFile.Writer writer = new SequenceFile.Writer(fs, job, path, MatrixIndexes.class, MatrixBlock.class); //beware ca 50ms
 
 		try
@@ -635,10 +626,8 @@ public class DataPartitionerLocal extends DataPartitioner
 				}
 			}
 		}
-		finally
-		{
-			if( writer != null )
-				writer.close();
+		finally {
+			IOUtilFunctions.closeSilently(writer);
 		}
 	}
 	
@@ -647,8 +636,8 @@ public class DataPartitionerLocal extends DataPartitioner
 		throws IOException
 	{
 		long key = getKeyFromFilePath(lpdir);
-		FileSystem fs = FileSystem.get(job);
 		Path path =  new Path(dir+"/"+key);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		SequenceFile.Writer writer = new SequenceFile.Writer(fs, job, path, MatrixIndexes.class, MatrixCell.class); //beware ca 50ms
 	
 		try
@@ -668,10 +657,8 @@ public class DataPartitionerLocal extends DataPartitioner
 				}
 			}
 		}
-		finally
-		{
-			if( writer != null )
-				writer.close();
+		finally {
+			IOUtilFunctions.closeSilently(writer);
 		}
 	}
 	
@@ -679,8 +666,8 @@ public class DataPartitionerLocal extends DataPartitioner
 		throws IOException
 	{
 		long key = getKeyFromFilePath(lpdir);
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path(dir+"/"+key);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		BufferedWriter out = new BufferedWriter(new OutputStreamWriter(fs.create(path,true)));		
 		try
 		{
@@ -704,10 +691,8 @@ public class DataPartitionerLocal extends DataPartitioner
 				}
 			}
 		}
-		finally
-		{
-			if( out != null )
-				out.close();
+		finally {
+			IOUtilFunctions.closeSilently(out);
 		}
 	}
 	

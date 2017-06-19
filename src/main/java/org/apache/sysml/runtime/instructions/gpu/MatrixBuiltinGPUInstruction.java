@@ -22,11 +22,10 @@ package org.apache.sysml.runtime.instructions.gpu;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysml.runtime.instructions.gpu.BuiltinUnaryGPUInstruction;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.matrix.data.LibMatrixCUDA;
 import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.utils.Statistics;
+import org.apache.sysml.utils.GPUStatistics;
 
 public class MatrixBuiltinGPUInstruction extends BuiltinUnaryGPUInstruction {
 	
@@ -37,21 +36,45 @@ public class MatrixBuiltinGPUInstruction extends BuiltinUnaryGPUInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) throws DMLRuntimeException {
-		Statistics.incrementNoOfExecutedGPUInst();
+		GPUStatistics.incrementNoOfExecutedGPUInst();
 		
 		String opcode = getOpcode();
-		MatrixObject mat = ec.getMatrixInputForGPUInstruction(_input.getName());
-
+		MatrixObject mat = getMatrixInputForGPUInstruction(ec, _input.getName());
 		ec.setMetaData(_output.getName(), mat.getNumRows(), mat.getNumColumns());
 
-		if(opcode.equals("sel+")) {
-			LibMatrixCUDA.relu(ec, mat, _output.getName());
-
-		} else if (opcode.equals("exp")) {
-			LibMatrixCUDA.exp(ec, mat, _output.getName());
-		}
-		else {
-			throw new DMLRuntimeException("Unsupported GPU operator:" + opcode);
+		switch(opcode) {
+			case "sel+":
+				LibMatrixCUDA.relu(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "exp":
+				LibMatrixCUDA.exp(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "sqrt":
+				LibMatrixCUDA.sqrt(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "log":
+				LibMatrixCUDA.log(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "round":
+				LibMatrixCUDA.round(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "floor":
+				LibMatrixCUDA.floor(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "ceil":
+				LibMatrixCUDA.ceil(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "abs":
+				LibMatrixCUDA.abs(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "sin":
+				LibMatrixCUDA.sin(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "cos":
+				LibMatrixCUDA.cos(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "tan":
+				LibMatrixCUDA.tan(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "asin":
+				LibMatrixCUDA.asin(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "acos":
+				LibMatrixCUDA.acos(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "atan":
+				LibMatrixCUDA.atan(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			case "sign":
+				LibMatrixCUDA.sign(ec, ec.getGPUContext(0), getExtendedOpcode(), mat, _output.getName()); break;
+			default:
+				throw new DMLRuntimeException("Unsupported GPU operator:" + opcode);
 		}
 		ec.releaseMatrixInputForGPUInstruction(_input.getName());
 		ec.releaseMatrixOutputForGPUInstruction(_output.getName());

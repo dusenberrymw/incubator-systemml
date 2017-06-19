@@ -29,7 +29,6 @@ import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -53,12 +52,12 @@ import org.apache.hadoop.yarn.client.api.YarnClientApplication;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.util.Records;
-
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.parser.ParseException;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLScriptException;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.Timing;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
 /**
@@ -266,29 +265,28 @@ public class DMLYarnClient
 	private void copyResourcesToHdfsWorkingDir( YarnConfiguration yconf, String hdfsWD ) 
 		throws ParseException, IOException, DMLRuntimeException, InterruptedException 
 	{
-		FileSystem fs = FileSystem.get(yconf);
+		Path confPath = new Path(hdfsWD, DML_CONFIG_NAME);
+		FileSystem fs = IOUtilFunctions.getFileSystem(confPath, yconf);
 		
 		//create working directory
-		MapReduceTool.createDirIfNotExistOnHDFS(hdfsWD, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
+		MapReduceTool.createDirIfNotExistOnHDFS(confPath, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
 		
 		//serialize the dml config to HDFS file 
 		//NOTE: we do not modify and ship the absolute scratch space path of the current user
 		//because this might result in permission issues if the app master is run with a different user
 		//(runtime plan migration during resource reoptimizations now needs to use qualified names
 		//for shipping/reading intermediates) TODO modify resource reoptimizer on prototype integration.
-		Path confPath = new Path(hdfsWD, DML_CONFIG_NAME);
-		FSDataOutputStream fout = fs.create(confPath, true);
-		//_dmlConfig.makeQualifiedScratchSpacePath(); 
-		fout.writeBytes(_dmlConfig.serializeDMLConfig() + "\n");
-		fout.close();
+		try( FSDataOutputStream fout = fs.create(confPath, true) ) {
+			fout.writeBytes(_dmlConfig.serializeDMLConfig() + "\n");
+		}
 		_hdfsDMLConfig = confPath.makeQualified(fs).toString();
 		LOG.debug("DML config written to HDFS file: "+_hdfsDMLConfig+"");
 
 		//serialize the dml script to HDFS file
 		Path scriptPath = new Path(hdfsWD, DML_SCRIPT_NAME);
-		FSDataOutputStream fout2 = fs.create(scriptPath, true);
-		fout2.writeBytes(_dmlScript);
-		fout2.close();
+		try( FSDataOutputStream fout2 = fs.create(scriptPath, true) ) {
+			fout2.writeBytes(_dmlScript);
+		}
 		_hdfsDMLScript = scriptPath.makeQualified(fs).toString();
 		LOG.debug("DML script written to HDFS file: "+_hdfsDMLScript+"");
 		
@@ -431,7 +429,7 @@ public class DMLYarnClient
 			command.append(' ');
 			if( i>0 && _args[i-1].equals("-f") ){
 				command.append(_hdfsDMLScript);
-				command.append(" -config=" + _hdfsDMLConfig);
+				command.append(" -config " + _hdfsDMLConfig);
 			}
 			else if( _args[i].startsWith("-config") ){
 				//ignore because config added with -f
@@ -454,7 +452,8 @@ public class DMLYarnClient
 		Path path = new Path(_hdfsJarFile); 
 		
 		LocalResource resource = Records.newRecord(LocalResource.class);
-		FileStatus jarStat = FileSystem.get(yconf).getFileStatus(path);
+		FileStatus jarStat = IOUtilFunctions
+			.getFileSystem(path, yconf).getFileStatus(path);
 		resource.setResource(ConverterUtils.getYarnUrlFromPath(path));
 		resource.setSize(jarStat.getLen());
 		resource.setTimestamp(jarStat.getModificationTime());
@@ -521,13 +520,11 @@ public class DMLYarnClient
 		
 		//write given message to hdfs
 		try {
-			FileSystem fs = FileSystem.get(yconf);
-			if( fs.exists(msgPath) )
-			{
-				FSDataInputStream fin = fs.open(msgPath);
-				BufferedReader br = new BufferedReader(new InputStreamReader(fin));
-				ret = br.readLine();
-				fin.close();
+			FileSystem fs = IOUtilFunctions.getFileSystem(msgPath, yconf);
+			if( fs.exists(msgPath) ) {
+				try( BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(msgPath))) ) {
+					ret = br.readLine();
+				}
 				LOG.debug("Stop message read from HDFS file "+msgPath+": "+ret );
 			}
 		}

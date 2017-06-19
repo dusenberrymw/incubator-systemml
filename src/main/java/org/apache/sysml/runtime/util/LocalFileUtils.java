@@ -25,8 +25,10 @@ import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Writer;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -41,7 +43,6 @@ import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.CacheBlock;
-import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
@@ -63,6 +64,7 @@ public class LocalFileUtils
 	public static final String CATEGORY_PARTITIONING = "partitioning";
 	public static final String CATEGORY_RESULTMERGE  = "resultmerge";
 	public static final String CATEGORY_WORK         = "work";
+	public static final String CATEGORY_CODEGEN      = "codegen";
 	
 	static {
 		_seq = new IDSequence();
@@ -120,8 +122,8 @@ public class LocalFileUtils
 			ret.readFields(in);
 		}
 		finally {
-			IOUtilFunctions.closeSilently(
-					(InputStream)in);
+			IOUtilFunctions.closeSilently((InputStream)in);
+			IOUtilFunctions.closeSilently(fis);
 		}
 			
 		return ret;
@@ -166,6 +168,7 @@ public class LocalFileUtils
 		}
 		finally {
 			IOUtilFunctions.closeSilently(out);
+			IOUtilFunctions.closeSilently(fos);
 		}	
 	}
 
@@ -205,6 +208,7 @@ public class LocalFileUtils
 		}
 		finally {
 			IOUtilFunctions.closeSilently(in);
+			IOUtilFunctions.closeSilently(fis);
 		}
 			
 		return bufferSize;
@@ -229,6 +233,7 @@ public class LocalFileUtils
 		}
 		finally{
 			IOUtilFunctions.closeSilently(out);	
+			IOUtilFunctions.closeSilently(fos);
 		}	
 	}
 
@@ -305,7 +310,7 @@ public class LocalFileUtils
 		return createWorkingDirectoryWithUUID( DMLScript.getUUID() );
 	}
 
-	public static synchronized String createWorkingDirectoryWithUUID( String uuid )
+	public static String createWorkingDirectoryWithUUID( String uuid )
 		throws DMLRuntimeException 
 	{
 		//create local tmp dir if not existing
@@ -435,32 +440,23 @@ public class LocalFileUtils
 	}
 	
 	/**
-	 * Validate external directory and filenames as soon as they enter the system
-	 * in order to prevent security issues such as path traversal, etc.
-	 * Currently, external (user provided) filenames are: scriptfile, config file,
-	 * local tmp working dir, hdfs working dir (scratch), read/write expressions,
-	 * and several export functionalities. 	 
-	 *  
+	 * Writes a simple text file to local file system.
 	 * 
-	 * @param fname file name
-	 * @param hdfs true if check for HDFS
-	 * @return true if valid filename
+	 * @param file output file
+	 * @param text content of text file 
+	 * @throws IOException
 	 */
-	public static boolean validateExternalFilename( String fname, boolean hdfs )
+	public static void writeTextFile( File file, String text ) 
+		throws IOException 
 	{
-		boolean ret = true;
-		
-		//check read local file from hdfs context
-		//(note: currently rejected with "wrong fs" anyway but this is impl-specific)
-		if( hdfs && !InfrastructureAnalyzer.isLocalMode() 
-			&& fname.startsWith("file:") )
-		{
-			//prevent redirection to local file system
-			ret = false; 
+		Writer writer = null;
+		try {
+			writer = new FileWriter(file);
+			writer.write(text);
+			writer.flush();
 		}
-		
-		//TODO white and black lists according to BI requirements
-		
-		return ret;
+		finally {
+			IOUtilFunctions.closeSilently(writer);
+		}
 	}
 }

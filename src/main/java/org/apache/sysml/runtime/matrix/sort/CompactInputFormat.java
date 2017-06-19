@@ -34,6 +34,7 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 
 @SuppressWarnings("rawtypes")
 public class CompactInputFormat<K extends WritableComparable, V extends Writable> extends FileInputFormat<K, V>  
@@ -76,9 +77,9 @@ public class CompactInputFormat<K extends WritableComparable, V extends Writable
 		@SuppressWarnings("unchecked")
 		public CompactInputRecordReader(JobConf job, FileSplit split) throws IOException {
 
-	    	fs = FileSystem.get(job);
 	    	path = split.getPath();
-	    	totLength = split.getLength();
+	    	fs = IOUtilFunctions.getFileSystem(path, job);
+			totLength = split.getLength();
 	    	currentStream = fs.open(path);
 	    	keyClass=(Class<? extends WritableComparable>) job.getClass(KEY_CLASS, WritableComparable.class);
 	    	valueClass=(Class<? extends Writable>) job.getClass(VALUE_CLASS, Writable.class);
@@ -86,7 +87,7 @@ public class CompactInputFormat<K extends WritableComparable, V extends Writable
 	    
 		@Override
 		public void close() throws IOException {
-			currentStream.close();
+			IOUtilFunctions.closeSilently(currentStream);
 		}
 		@SuppressWarnings("unchecked")
 		public K createKey() {

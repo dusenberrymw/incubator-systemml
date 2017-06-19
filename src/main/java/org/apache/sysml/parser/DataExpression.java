@@ -29,13 +29,14 @@ import java.util.Map.Entry;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.DataGenOp;
 import org.apache.sysml.parser.LanguageException.LanguageErrorCodes;
 import org.apache.sysml.parser.common.CustomErrorListener;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
-import org.apache.sysml.runtime.util.LocalFileUtils;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.utils.JSONHelper;
@@ -296,6 +297,9 @@ public class DataExpression extends DataIdentifier
 	public void addRandExprParam(String paramName, Expression paramValue) 
 		throws LanguageException
 	{
+		if (DMLScript.VALIDATOR_IGNORE_ISSUES && (paramValue == null)) {
+			return;
+		}
 		// check name is valid
 		boolean found = false;
 		if (paramName != null ){
@@ -375,11 +379,9 @@ public class DataExpression extends DataIdentifier
 	
 	public DataExpression(DataOp op, HashMap<String,Expression> varParams, 
 			String filename, int blp, int bcp, int elp, int ecp) {
-		
-		_kind = Kind.DataOp;
 		_opcode = op;
 		_varParams = varParams;
-		this.setAllPositions(filename, blp, bcp, elp, ecp);
+		setAllPositions(filename, blp, bcp, elp, ecp);
 	}
 
 	public Expression rewriteExpression(String prefix) throws LanguageException {
@@ -483,6 +485,9 @@ public class DataExpression extends DataIdentifier
 	}
 
 	public void addVarParam(String name, Expression value){
+		if (DMLScript.VALIDATOR_IGNORE_ISSUES && (value == null)) {
+			return;
+		}
 		_varParams.put(name, value);
 		
 		// if required, initialize values
@@ -507,26 +512,23 @@ public class DataExpression extends DataIdentifier
 		if (fileNameExpr instanceof ConstIdentifier){
 			return fileNameExpr.toString();
 		}
-		else if (fileNameExpr instanceof BinaryExpression){
+		else if (fileNameExpr instanceof BinaryExpression) {
 			BinaryExpression expr = (BinaryExpression)fileNameExpr;
-							
-			if (expr.getKind()== Expression.Kind.BinaryOp){
-				Expression.BinaryOp op = expr.getOpCode();
-				switch (op){
-				case PLUS:
-						filename = "";
-						filename = fileNameCat(expr, currConstVars, filename, conditional);
-						// Since we have computed the value of filename, we update
-						// varParams with a const string value
-						StringIdentifier fileString = new StringIdentifier(filename, 
-								this.getFilename(), this.getBeginLine(), this.getBeginColumn(), 
-								this.getEndLine(), this.getEndColumn());
-						removeVarParam(IO_FILENAME);
-						addVarParam(IO_FILENAME, fileString);
-					break;
-				default:
-					raiseValidateError("for read method, parameter " + IO_FILENAME + " can only be const string concatenations. ", conditional);
-				}
+			Expression.BinaryOp op = expr.getOpCode();
+			switch (op){
+			case PLUS:
+					filename = "";
+					filename = fileNameCat(expr, currConstVars, filename, conditional);
+					// Since we have computed the value of filename, we update
+					// varParams with a const string value
+					StringIdentifier fileString = new StringIdentifier(filename, 
+							this.getFilename(), this.getBeginLine(), this.getBeginColumn(), 
+							this.getEndLine(), this.getEndColumn());
+					removeVarParam(IO_FILENAME);
+					addVarParam(IO_FILENAME, fileString);
+				break;
+			default:
+				raiseValidateError("for read method, parameter " + IO_FILENAME + " can only be const string concatenations. ", conditional);
 			}
 		}
 		else {
@@ -537,13 +539,7 @@ public class DataExpression extends DataIdentifier
 	}
 	
 	public static String getMTDFileName(String inputFileName) throws LanguageException {
-		String mtdName = inputFileName + ".mtd";
-		
-		//validate read filename
-		if( !LocalFileUtils.validateExternalFilename(mtdName, true) )
-			throw new LanguageException("Invalid (non-trustworthy) hdfs read filename.");
-
-		return mtdName;
+		return inputFileName + ".mtd";
 	}
 	
 	/**
@@ -1062,11 +1058,6 @@ public class DataExpression extends DataIdentifier
 			}*/
 			
 			//validate read filename
-			String fnameWrite = getVarParam(IO_FILENAME).toString();
-			if( !LocalFileUtils.validateExternalFilename(fnameWrite, true) ) //always unconditional
-				raiseValidateError("Invalid (non-trustworthy) hdfs write filename.", false);
-	    	
-			
 			if (getVarParam(FORMAT_TYPE) == null || getVarParam(FORMAT_TYPE).toString().equalsIgnoreCase("text"))
 				getOutput().setBlockDimensions(-1, -1);
 			else if (getVarParam(FORMAT_TYPE).toString().equalsIgnoreCase("binary"))
@@ -1720,17 +1711,14 @@ public class DataExpression extends DataIdentifier
 	{
 		// Processing the left node first
 		if (expr.getLeft() instanceof BinaryExpression 
-				&& ((BinaryExpression)expr.getLeft()).getKind()== BinaryExpression.Kind.BinaryOp
-				&& ((BinaryExpression)expr.getLeft()).getOpCode() == BinaryOp.PLUS){
+			&& ((BinaryExpression)expr.getLeft()).getOpCode() == BinaryOp.PLUS){
 			filename = fileNameCat((BinaryExpression)expr.getLeft(), currConstVars, filename, conditional)+ filename;
 		}
 		else if (expr.getLeft() instanceof ConstIdentifier){
 			filename = ((ConstIdentifier)expr.getLeft()).toString()+ filename;
 		}
 		else if (expr.getLeft() instanceof DataIdentifier 
-				&& ((DataIdentifier)expr.getLeft()).getDataType() == Expression.DataType.SCALAR
-				&& ((DataIdentifier)expr.getLeft()).getKind() == Expression.Kind.Data){ 
-				//&& ((DataIdentifier)expr.getLeft()).getValueType() == Expression.ValueType.STRING){
+			&& ((DataIdentifier)expr.getLeft()).getDataType() == Expression.DataType.SCALAR){ 
 			String name = ((DataIdentifier)expr.getLeft()).getName();
 			filename = ((StringIdentifier)currConstVars.get(name)).getValue() + filename;
 		}
@@ -1738,9 +1726,8 @@ public class DataExpression extends DataIdentifier
 			raiseValidateError("Parameter " + IO_FILENAME + " only supports a const string or const string concatenations.", conditional);
 		}
 		// Now process the right node
-		if (expr.getRight()instanceof BinaryExpression 
-				&& ((BinaryExpression)expr.getRight()).getKind()== BinaryExpression.Kind.BinaryOp
-				&& ((BinaryExpression)expr.getRight()).getOpCode() == BinaryOp.PLUS){
+		if (expr.getRight() instanceof BinaryExpression 
+			&& ((BinaryExpression)expr.getRight()).getOpCode() == BinaryOp.PLUS){
 			filename = filename + fileNameCat((BinaryExpression)expr.getRight(), currConstVars, filename, conditional);
 		}
 		// DRB: CHANGE
@@ -1748,9 +1735,8 @@ public class DataExpression extends DataIdentifier
 			filename = filename + ((ConstIdentifier)expr.getRight()).toString();
 		}
 		else if (expr.getRight() instanceof DataIdentifier 
-				&& ((DataIdentifier)expr.getRight()).getDataType() == Expression.DataType.SCALAR
-				&& ((DataIdentifier)expr.getRight()).getKind() == Expression.Kind.Data 
-				&& ((DataIdentifier)expr.getRight()).getValueType() == Expression.ValueType.STRING){
+			&& ((DataIdentifier)expr.getRight()).getDataType() == Expression.DataType.SCALAR
+			&& ((DataIdentifier)expr.getRight()).getValueType() == Expression.ValueType.STRING){
 			String name = ((DataIdentifier)expr.getRight()).getName();
 			filename =  filename + ((StringIdentifier)currConstVars.get(name)).getValue();
 		}
@@ -1912,98 +1898,53 @@ public class DataExpression extends DataIdentifier
 		throws LanguageException 
 	{
 		JSONObject retVal = null;
-		boolean exists = false;
-		FileSystem fs = null;
-		
-		try {
-			fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
-		} catch (Exception e){
-			raiseValidateError("could not read the configuration file: "+e.getMessage(), false);
-		}
-		
-		Path pt = new Path(filename);
-		try {
-			if (fs.exists(pt)){
-				exists = true;
-			}
-		} catch (Exception e){
-			exists = false;
-		}
-	
-		boolean isDirBoolean = false;
-		try {
-			if (exists && fs.getFileStatus(pt).isDirectory())
-				isDirBoolean = true;
-			else
-				isDirBoolean = false;
-		}
-		catch(Exception e){
-			raiseValidateError("error validing whether path " + pt.toString() + " is directory or not: "+e.getMessage(), conditional);
-		}
+		boolean exists = MapReduceTool.existsFileOnHDFS(filename);
+		boolean isDir = MapReduceTool.isDirectory(filename);
 		
 		// CASE: filename is a directory -- process as a directory
-		if (exists && isDirBoolean){
-			
-			// read directory contents
+		if( exists && isDir ) 
+		{
 			retVal = new JSONObject();
-			
-			FileStatus[] stats = null;
-			
-			try {
-				stats = fs.listStatus(pt);
-			}
-			catch (Exception e){
-				raiseValidateError("for MTD file in directory, error reading directory with MTD file " + pt.toString() + ": " + e.getMessage(), conditional);
-			}
-			
-			for(FileStatus stat : stats){
+			for(FileStatus stat : MapReduceTool.getDirectoryListing(filename)) {
 				Path childPath = stat.getPath(); // gives directory name
-				if (childPath.getName().startsWith("part")){
-					
-					BufferedReader br = null;
-					try {
-						br = new BufferedReader(new InputStreamReader(fs.open(childPath)));
-					}
-					catch(Exception e){
-						raiseValidateError("for MTD file in directory, error reading part of MTD file with path " + childPath.toString() + ": " + e.getMessage(), conditional);
-					}
-					
-					JSONObject childObj = null;
-					try {
-						childObj = JSONHelper.parse(br);
-					}
-					catch(Exception e){
-						raiseValidateError("for MTD file in directory, error parsing part of MTD file with path " + childPath.toString() + ": " + e.getMessage(), conditional);
-					}
-					
-			    	for( Object obj : childObj.entrySet() ){
+				if( !childPath.getName().startsWith("part") )
+					continue;
+				BufferedReader br = null;
+				try {
+					FileSystem fs = IOUtilFunctions.getFileSystem(childPath);
+					br = new BufferedReader(new InputStreamReader(fs.open(childPath)));
+					JSONObject childObj = JSONHelper.parse(br);
+					for( Object obj : childObj.entrySet() ){
 						@SuppressWarnings("unchecked")
 						Entry<Object,Object> e = (Entry<Object, Object>) obj;
 			    		Object key = e.getKey();
 			    		Object val = e.getValue();
 			    		retVal.put(key, val);
-					}
+					}						
 				}
-			} // end for 
+				catch(Exception e){
+					raiseValidateError("for MTD file in directory, error parting part of MTD file with path " + childPath.toString() + ": " + e.getMessage(), conditional);
+				}
+				finally {
+					IOUtilFunctions.closeSilently(br);
+				}
+			} 
 		}
-		
 		// CASE: filename points to a file
-		else if (exists){
-			
+		else if (exists) 
+		{
 			BufferedReader br = null;
-			
-			// try reading MTD file
 			try {
-				br=new BufferedReader(new InputStreamReader(fs.open(pt)));
-			} catch (Exception e){
-				raiseValidateError("error reading MTD file with path " + pt.toString() + ": " + e.getMessage(), conditional);
+				Path path = new Path(filename);
+				FileSystem fs = IOUtilFunctions.getFileSystem(path);
+				br = new BufferedReader(new InputStreamReader(fs.open(path)));
+				retVal = new JSONObject(br);
+			} 
+			catch (Exception e){
+				raiseValidateError("error parsing MTD file with path " + filename + ": " + e.getMessage(), conditional);
 			}
-			
-			// try parsing MTD file
-			try {
-				retVal =  JSONHelper.parse(br);	
-			} catch (Exception e){
-				raiseValidateError("error parsing MTD file with path " + pt.toString() + ": " + e.getMessage(), conditional);
+			finally {
+				IOUtilFunctions.closeSilently(br);
 			}
 		}
 			
@@ -2020,19 +1961,16 @@ public class DataExpression extends DataIdentifier
 		
 		try 
 		{
-			FileSystem fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
-			Path pt = new Path(filename);
-			if (fs.exists(pt)){
-				exists = true;
-			}
-			
-			boolean getFileStatusIsDir = fs.getFileStatus(pt).isDirectory();
+			Path path = new Path(filename);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path);
+			exists = fs.exists(path);
+			boolean getFileStatusIsDir = fs.getFileStatus(path).isDirectory();
 			
 			if (exists && getFileStatusIsDir){
 				raiseValidateError("MatrixMarket files as directories not supported", conditional);
 			}
 			else if (exists) {
-				BufferedReader in = new BufferedReader(new InputStreamReader(fs.open(pt)));
+				BufferedReader in = new BufferedReader(new InputStreamReader(fs.open(path)));
 				try
 				{
 					retVal[0] = in.readLine();
@@ -2045,10 +1983,8 @@ public class DataExpression extends DataIdentifier
 						raiseValidateError("MatrixMarket files must begin with a header line.", conditional);
 					}
 				}
-				finally
-				{
-					if( in != null )
-						in.close();
+				finally {
+					IOUtilFunctions.closeSilently(in);
 				}
 			}
 			else {
@@ -2069,103 +2005,59 @@ public class DataExpression extends DataIdentifier
 	{
 		// Check the MTD file exists. if there is an MTD file, return false.
 		JSONObject mtdObject = readMetadataFile(mtdFileName, conditional);
-	    
-		if (mtdObject != null)
+	    if (mtdObject != null)
 			return false;
 		
-		boolean exists = false;
-		FileSystem fs = null;
-		
-		try {
-			fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
-		} catch (Exception e){
-			LOG.error(this.printErrorLocation() + "could not read the configuration file.");
-			throw new LanguageException(this.printErrorLocation() + "could not read the configuration file.", e);
-		}
-		
-		Path pt = new Path(inputFileName);
-		try {
-			if (fs.exists(pt)){
-				exists = true;
-			}
-		} catch (Exception e){
-			LOG.error(this.printErrorLocation() + "file " + inputFileName + " not found");
-			throw new LanguageException(this.printErrorLocation() + "file " + inputFileName + " not found");
-		}
-	
-		try {
-			// CASE: filename is a directory -- process as a directory
-			if (exists && fs.getFileStatus(pt).isDirectory()){
-				
-				// currently, only MM files as files are supported.  So, if file is directory, then infer 
-				// likely not MM file
-				return false;
-			}
-			// CASE: filename points to a file
-			else if (exists){
-				
-				//BufferedReader in = new BufferedReader(new FileReader(filename));
-				BufferedReader in = new BufferedReader(new InputStreamReader(fs.open(pt)));
-				
+		if( MapReduceTool.existsFileOnHDFS(inputFileName) 
+			&& !MapReduceTool.isDirectory(inputFileName)  )
+		{
+			BufferedReader in = null;
+			try {
+				Path path = new Path(inputFileName);
+				FileSystem fs = IOUtilFunctions.getFileSystem(path);
+				in = new BufferedReader(new InputStreamReader(fs.open(path)));
 				String headerLine = new String("");			
 				if (in.ready())
 					headerLine = in.readLine();
-				in.close();
-			
-				// check that headerline starts with "%%"
-				// will infer malformed 
-				if( headerLine !=null && headerLine.startsWith("%%") )
-					return true;
-				else
-					return false;
+				return (headerLine !=null && headerLine.startsWith("%%"));
 			}
-			else {
-				return false;
+			catch(Exception ex) {
+				throw new LanguageException("Failed to read mtd file.", ex);
 			}
-			
-		} catch (Exception e){
-			return false;
+			finally {
+				IOUtilFunctions.closeSilently(in);
+			}
 		}
+		
+		return false;
 	}
 	
 	public boolean checkHasDelimitedFormat(String filename, boolean conditional)
 		throws LanguageException 
 	{
-	 
-        // if the MTD file exists, check the format is not binary 
+		// if the MTD file exists, check the format is not binary 
 		JSONObject mtdObject = readMetadataFile(filename + ".mtd", conditional);
-        if (mtdObject != null){
-        	String formatTypeString = (String)JSONHelper.get(mtdObject,FORMAT_TYPE);
-            if (formatTypeString != null ) {
-            	if ( formatTypeString.equalsIgnoreCase(FORMAT_TYPE_VALUE_CSV) )
-            		return true;
-            	else
-            		return false;
-        	}
-        }
-        return false;
-
-        // The file format must be specified either in .mtd file or in read() statement
-        // Therefore, one need not actually read the data to infer the format.
+		if (mtdObject != null) {
+			String formatTypeString = (String)JSONHelper.get(mtdObject,FORMAT_TYPE);
+			return (formatTypeString != null ) && 
+				formatTypeString.equalsIgnoreCase(FORMAT_TYPE_VALUE_CSV);
+		}
+		return false;
+		// The file format must be specified either in .mtd file or in read() statement
+		// Therefore, one need not actually read the data to infer the format.
 	}
 	
 	public boolean isCSVReadWithUnknownSize()
 	{
-		boolean ret = false;
-		
 		Expression format = getVarParam(FORMAT_TYPE);
-		if( _opcode == DataOp.READ && format!=null && format.toString().equalsIgnoreCase(FORMAT_TYPE_VALUE_CSV) )
-		{
+		if( _opcode == DataOp.READ && format!=null && format.toString().equalsIgnoreCase(FORMAT_TYPE_VALUE_CSV) ) {
 			Expression rows = getVarParam(READROWPARAM);
 			Expression cols = getVarParam(READCOLPARAM);
-			if(   (rows==null || Long.parseLong(rows.toString())<0)
-				||(cols==null || Long.parseLong(cols.toString())<0) )
-			{
-				ret = true;
-			}
+			return (rows==null || Long.parseLong(rows.toString())<0)
+				||(cols==null || Long.parseLong(cols.toString())<0);
 		}
 		
-		return ret;
+		return false;
 	}
 	
 	public boolean isRead()

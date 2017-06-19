@@ -29,7 +29,6 @@ import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.OpOp1;
 import org.apache.sysml.hops.Hop.OpOp2;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.UnaryOp;
@@ -59,8 +58,8 @@ public class RewriteConstantFolding extends HopRewriteRule
 	private static final String TMP_VARNAME = "__cf_tmp";
 	
 	//reuse basic execution runtime
-	private static ProgramBlock     _tmpPB = null;
-	private static ExecutionContext _tmpEC = null;
+	private ProgramBlock     _tmpPB = null;
+	private ExecutionContext _tmpEC = null;
 	
 	
 	@Override
@@ -98,7 +97,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 	private Hop rConstantFoldingExpression( Hop root ) 
 		throws HopsException
 	{
-		if( root.getVisited() == VisitStatus.DONE )
+		if( root.isVisited() )
 			return root;
 		
 		//recursively process childs (before replacement to allow bottom-recursion)
@@ -168,7 +167,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 			
 		
 		//mark processed
-		root.setVisited( VisitStatus.DONE );
+		root.setVisited();
 		return root;
 	}
 	
@@ -233,7 +232,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		return literal;
 	}
 	
-	private static ProgramBlock getProgramBlock() 
+	private ProgramBlock getProgramBlock() 
 		throws DMLRuntimeException
 	{
 		if( _tmpPB == null )
@@ -241,7 +240,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		return _tmpPB;
 	}
 	
-	private static ExecutionContext getExecutionContext()
+	private ExecutionContext getExecutionContext()
 	{
 		if( _tmpEC == null )
 			_tmpEC = ExecutionContextFactory.createContext();

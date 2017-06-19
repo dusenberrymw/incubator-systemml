@@ -28,7 +28,7 @@ import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.matrix.data.LibMatrixCUDA;
 import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.utils.Statistics;
+import org.apache.sysml.utils.GPUStatistics;
 
 public class MatrixMatrixAxpyGPUInstruction extends ArithmeticBinaryGPUInstruction
 {
@@ -85,28 +85,37 @@ public class MatrixMatrixAxpyGPUInstruction extends ArithmeticBinaryGPUInstructi
 	
 	@Override
 	public void processInstruction(ExecutionContext ec) throws DMLRuntimeException {
-		Statistics.incrementNoOfExecutedGPUInst();
+		GPUStatistics.incrementNoOfExecutedGPUInst();
 		
-		MatrixObject in1 = ec.getMatrixInputForGPUInstruction(_input1.getName());
-		MatrixObject in2 = ec.getMatrixInputForGPUInstruction(_input2.getName());
+		MatrixObject in1 = getMatrixInputForGPUInstruction(ec, _input1.getName());
+		MatrixObject in2 = getMatrixInputForGPUInstruction(ec, _input2.getName());
 		ScalarObject scalar = ec.getScalarInput(constant.getName(), constant.getValueType(), constant.isLiteral());
 		
 		long rlen1 = in1.getNumRows();
 		long clen1 = in1.getNumColumns();
 		long rlen2 = in2.getNumRows();
 		long clen2 = in2.getNumColumns();
-		if (rlen1 != rlen2 || clen1 != clen2){
-			// TODO: We donot support matrix-vector axpy operation 
-			throw new DMLRuntimeException("The dimensions of inputs in GPU axpy operation should match:"+
-					rlen1 + " != " +  rlen2 + " || " +  clen1 + " != " + clen2);
+		if(isValidMMOperation(rlen1, rlen2, clen1, clen2) || isValidMVOperation(rlen1, rlen2, clen1, clen2)) {
+			ec.setMetaData(_output.getName(), (int)rlen1, (int)clen1);
 		}
-
-		ec.setMetaData(_output.getName(), (int)rlen1, (int)clen1);
+		else { 
+			throw new DMLRuntimeException("Incorrect dimensions of inputs in GPU axpy operation. input1:" + rlen1 + " X " + clen1 +
+					" and input2:" + rlen2 + " X " + clen2);
+		}
 		
-		LibMatrixCUDA.axpy(ec, in1, in2, _output.getName(), multiplier*scalar.getDoubleValue());
+		LibMatrixCUDA.axpy(ec, ec.getGPUContext(0), getExtendedOpcode(), in1, in2, _output.getName(), multiplier*scalar.getDoubleValue());
 		
 		ec.releaseMatrixInputForGPUInstruction(_input1.getName());
 		ec.releaseMatrixInputForGPUInstruction(_input2.getName());
-        ec.releaseMatrixOutputForGPUInstruction(_output.getName());
+		ec.releaseMatrixOutputForGPUInstruction(_output.getName());
 	}
+	
+	private boolean isValidMMOperation(long rlen1, long rlen2, long clen1, long clen2) {
+		return rlen1 == rlen2 && clen1 == clen2; 
+	}
+	
+	private boolean isValidMVOperation(long rlen1, long rlen2, long clen1, long clen2) {
+		return (rlen1 == rlen2 && clen2 == 1) || (rlen2 == 1 && clen1 == clen2); 
+	}
+	
 }

@@ -34,7 +34,10 @@ import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 
-
+/**
+ *  A DataOp can be either a persistent read/write or transient read/write - writes will always have at least one input,
+ *  but all types can have parameters (e.g., for csv literals of delimiter, header, etc).
+ */
 public class DataOp extends Hop 
 {
 	private DataOpTypes _dataop;
@@ -182,7 +185,29 @@ public class DataOp extends Hop
 		if (dop == DataOpTypes.TRANSIENTWRITE)
 			setInputFormatType(FileFormatTypes.BINARY);
 	}
-	
+
+	/** Check for N (READ) or N+1 (WRITE) inputs. */
+	@Override
+	public void checkArity() throws HopsException {
+		int sz = _input.size();
+		int pz = _paramIndexMap.size();
+		switch (_dataop) {
+		case PERSISTENTREAD:
+		case TRANSIENTREAD:
+			HopsException.check(sz == pz, this,
+					"in %s operator type has %d inputs and %d parameters",
+					_dataop.name(), sz, pz);
+			break;
+		case PERSISTENTWRITE:
+		case TRANSIENTWRITE:
+		case FUNCTIONOUTPUT:
+			HopsException.check(sz == pz + 1, this,
+					"in %s operator type has %d inputs and %d parameters (expect 1 more input for write operator type)",
+					_dataop.name(), sz, pz);
+			break;
+		}
+	}
+
 	public DataOpTypes getDataOpType()
 	{
 		return _dataop;
@@ -332,23 +357,6 @@ public class DataOp extends Hop
 		s += HopsData2String.get(_dataop);
 		s += " "+getName();
 		return s;
-	}
-
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  DataOp: " + _dataop);
-				if (_fileName != null) {
-					LOG.debug(" file: " + _fileName);
-				}
-				LOG.debug(" format: " + getInputFormatType());
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	@Override
@@ -584,11 +592,10 @@ public class DataOp extends Hop
 	 * @param inputName The name of the input to remove
 	 */
 	public void removeInput(String inputName) {
-
 		int inputIndex = getParameterIndex(inputName);
-		_input.remove(inputIndex);
+		Hop tmp = _input.remove(inputIndex);
+		tmp._parent.remove(this);
 		_paramIndexMap.remove(inputName);
-
 		for (Entry<String, Integer> entry : _paramIndexMap.entrySet()) {
 			if (entry.getValue() > inputIndex) {
 				_paramIndexMap.put(entry.getKey(), (entry.getValue() - 1));

@@ -185,7 +185,7 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 
 	public double getSparsity() {
 		MatrixCharacteristics mc = getMatrixCharacteristics();		
-		return ((double)mc.getNonZeros())/mc.getRows()/mc.getCols();
+		return OptimizerUtils.getSparsity(mc);
 	}
 	
 	// *********************************************
@@ -293,6 +293,10 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 						rows = brlen;
 						cols = mc.getCols();
 						break;
+					case ROW_BLOCK_WISE_N: 
+						rows = _partitionSize;
+						cols = mc.getCols();
+						break;
 					case COLUMN_WISE:
 						rows = mc.getRows();
 						cols = 1;
@@ -301,6 +305,10 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 						rows = mc.getRows();
 						cols = bclen;
 						break;
+					case COLUMN_BLOCK_WISE_N: 
+						rows = mc.getRows();
+						cols = _partitionSize;
+						break;	
 					default:
 						throw new CacheException("Unsupported partition format: "+_partitionFormat);
 				}
@@ -370,6 +378,10 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 				sb.append(Lop.FILE_SEPARATOR);
 				sb.append((pred.rowStart-1)/brlen+1);
 				break;
+			case ROW_BLOCK_WISE_N:
+				sb.append(Lop.FILE_SEPARATOR);
+				sb.append((pred.rowStart-1)/_partitionSize+1);
+				break;
 			case COLUMN_WISE:
 				sb.append(Lop.FILE_SEPARATOR);
 				sb.append(pred.colStart);
@@ -378,6 +390,10 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 				sb.append(Lop.FILE_SEPARATOR);
 				sb.append((pred.colStart-1)/bclen+1);
 				break;
+			case COLUMN_BLOCK_WISE_N:
+				sb.append(Lop.FILE_SEPARATOR);
+				sb.append((pred.colStart-1)/_partitionSize+1);
+				break;	
 			default:
 				throw new CacheException ("MatrixObject not available to indexed read.");
 		}
@@ -420,10 +436,12 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 					+ ", dimensions: [" + mc.getRows() + ", " + mc.getCols() + ", " + mc.getNonZeros() + "]");
 			begin = System.currentTimeMillis();
 		}
-			
-		double sparsity = ( mc.getNonZeros() >= 0 ? ((double)mc.getNonZeros())/(mc.getRows()*mc.getCols()) : 1.0d) ; 
+		
+		//read matrix and maintain meta data
+		double sparsity = (mc.getNonZeros() >= 0 ? ((double)mc.getNonZeros())/(mc.getRows()*mc.getCols()) : 1.0d); 
 		MatrixBlock newData = DataConverter.readMatrixFromHDFS(fname, iimd.getInputInfo(), rlen, clen,
 				mc.getRowsPerBlock(), mc.getColsPerBlock(), sparsity, getFileFormatProperties());
+		setHDFSFileExists(true);
 		
 		//sanity check correct output
 		if( newData == null )
@@ -466,14 +484,17 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 			
 			//guarded rdd collect 
 			if( ii == InputInfo.BinaryBlockInputInfo && //guarded collect not for binary cell
-				!OptimizerUtils.checkSparkCollectMemoryBudget(rlen, clen, brlen, bclen, nnz, getPinnedSize()) ) {
+				!OptimizerUtils.checkSparkCollectMemoryBudget(mc, getPinnedSize()+getBroadcastSize()) ) {
 				//write RDD to hdfs and read to prevent invalid collect mem consumption 
 				//note: lazy, partition-at-a-time collect (toLocalIterator) was significantly slower
 				if( !MapReduceTool.existsFileOnHDFS(_hdfsFileName) ) { //prevent overwrite existing file
 					long newnnz = SparkExecutionContext.writeRDDtoHDFS(lrdd, _hdfsFileName, iimd.getOutputInfo());
 					((MatrixDimensionsMetaData) _metaData).getMatrixCharacteristics().setNonZeros(newnnz);
+					((RDDObject)rdd).setPending(false); //mark rdd as non-pending (for export)
 					((RDDObject)rdd).setHDFSFile(true); //mark rdd as hdfs file (for restore)
 					writeStatus.setValue(true);         //mark for no cache-write on read
+					//note: the flag hdfsFile is actually not entirely correct because we still hold an rdd 
+					//reference to the input not to an rdd of the hdfs file but the resulting behavior is correct
 				}
 				mb = readBlobFromHDFS(_hdfsFileName);
 			}

@@ -21,7 +21,10 @@ package org.apache.sysml.runtime.controlprogram.context;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.debug.DMLFrame;
 import org.apache.sysml.debug.DMLProgramCounter;
@@ -36,13 +39,11 @@ import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysml.runtime.instructions.Instruction;
-import org.apache.sysml.runtime.instructions.cp.BooleanObject;
+import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
-import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
-import org.apache.sysml.runtime.instructions.cp.StringObject;
+import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -51,13 +52,13 @@ import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
 import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.Pair;
 import org.apache.sysml.runtime.util.MapReduceTool;
-import org.apache.sysml.runtime.util.UtilFunctions;
 
 
-public class ExecutionContext 
-{
-	
+public class ExecutionContext {
+	protected static final Log LOG = LogFactory.getLog(ExecutionContext.class.getName());
+
 	//program reference (e.g., function repository)
 	protected Program _prog = null;
 	
@@ -66,6 +67,11 @@ public class ExecutionContext
 	
 	//debugging (optional)
 	protected DebugState _dbState = null;
+
+	/**
+	 * List of {@link GPUContext}s owned by this {@link ExecutionContext}
+	 */
+    protected List<GPUContext> _gpuContexts = new ArrayList<>();
 
 	protected ExecutionContext()
 	{
@@ -97,13 +103,44 @@ public class ExecutionContext
 	public void setVariables(LocalVariableMap vars) {
 		_variables = vars;
 	}
-	
-	public void destroyGPUContext() throws DMLRuntimeException {
-		if(GPUContext.isGPUContextCreated)
-			GPUContext.getGPUContext().destroy();
+
+	/**
+	 * Get the i-th GPUContext
+	 * @param index index of the GPUContext
+	 * @return a valid GPUContext or null if the indexed GPUContext does not exist.
+	 */
+    public GPUContext getGPUContext(int index) {
+    	try {
+			return _gpuContexts.get(index);
+		} catch (IndexOutOfBoundsException e){
+    		return null;
+		}
+    }
+
+	/**
+	 * Sets the list of GPUContexts
+	 * @param gpuContexts a collection of GPUContexts
+	 */
+	public void setGPUContexts(List<GPUContext> gpuContexts){
+		_gpuContexts = gpuContexts;
 	}
-	
-	
+
+	/**
+	 * Gets the list of GPUContexts
+	 * @return a list of GPUContexts
+	 */
+	public List<GPUContext> getGPUContexts() {
+		return _gpuContexts;
+	}
+
+	/**
+	 * Gets the number of GPUContexts
+	 * @return number of GPUContexts
+	 */
+	public int getNumGPUContexts() {
+    	return _gpuContexts.size();
+	}
+
 	/* -------------------------------------------------------
 	 * Methods to handle variables and associated data objects
 	 * -------------------------------------------------------
@@ -224,14 +261,20 @@ public class ExecutionContext
 				((MatrixFormatMetaData)oldMetaData).getOutputInfo(),
 				((MatrixFormatMetaData)oldMetaData).getInputInfo()));
 	}
-	
-	public MatrixObject getDenseMatrixOutputForGPUInstruction(String varName) 
+
+	/**
+	 * Allocates a dense matrix on the GPU (for output)
+	 * @param varName	name of the output matrix (known by this {@link ExecutionContext})
+	 * @return a pair containing the wrapping {@link MatrixObject} and a boolean indicating whether a cuda memory allocation took place (as opposed to the space already being allocated)
+	 * @throws DMLRuntimeException
+	 */
+	public Pair<MatrixObject, Boolean> getDenseMatrixOutputForGPUInstruction(String varName)
 		throws DMLRuntimeException 
 	{	
 		MatrixObject mo = allocateGPUMatrixObject(varName);
-		mo.getGPUObject().acquireDeviceModifyDense();
+		boolean allocated = mo.getGPUObject(getGPUContext(0)).acquireDeviceModifyDense();
 		mo.getMatrixCharacteristics().setNonZeros(-1);
-		return mo;
+		return new Pair<MatrixObject, Boolean>(mo, allocated);
 	}
 
     /**
@@ -243,13 +286,13 @@ public class ExecutionContext
      * @return matrix object
      * @throws DMLRuntimeException if DMLRuntimeException occurs
      */
-    public MatrixObject getSparseMatrixOutputForGPUInstruction(String varName, long nnz)
+    public Pair<MatrixObject, Boolean> getSparseMatrixOutputForGPUInstruction(String varName, long nnz)
         throws DMLRuntimeException
     {
         MatrixObject mo = allocateGPUMatrixObject(varName);
         mo.getMatrixCharacteristics().setNonZeros(nnz);
-        mo.getGPUObject().acquireDeviceModifySparse();
-        return mo;
+				boolean allocated = mo.getGPUObject(getGPUContext(0)).acquireDeviceModifySparse();
+        return new Pair<MatrixObject, Boolean>(mo, allocated);
     } 
 
 	/**
@@ -260,32 +303,40 @@ public class ExecutionContext
 	 */
 	public MatrixObject allocateGPUMatrixObject(String varName) throws DMLRuntimeException {
 		MatrixObject mo = getMatrixObject(varName);
-		if( mo.getGPUObject() == null ) {
-			mo.setGPUObject(GPUContext.createGPUObject(mo));
+		if( mo.getGPUObject(getGPUContext(0)) == null ) {
+			GPUObject newGObj = getGPUContext(0).createGPUObject(mo);
+			// The lock is added here for an output block
+			// so that any block currently in use is not deallocated by eviction on the GPU
+			newGObj.addLock();
+			mo.setGPUObject(getGPUContext(0), newGObj);
 		}
 		return mo;
 	}
 
-	public MatrixObject getMatrixInputForGPUInstruction(String varName) 
+	public Pair<MatrixObject, Boolean> getMatrixInputForGPUInstruction(String varName)
 			throws DMLRuntimeException 
-	{	
+	{
+		GPUContext gCtx = getGPUContext(0);
+		boolean copied = false;
 		MatrixObject mo = getMatrixObject(varName);
 		if(mo == null) {
 			throw new DMLRuntimeException("No matrix object available for variable:" + varName);
 		}
-		if( mo.getGPUObject() == null ) {
-			mo.setGPUObject(GPUContext.createGPUObject(mo));
-		}
+
 		boolean acquired = false;
-		if( !mo.getGPUObject().isAllocated() ) {
+		if( mo.getGPUObject(gCtx) == null ) {
+			GPUObject newGObj = gCtx.createGPUObject(mo);
+			mo.setGPUObject(gCtx, newGObj);
+		} else if( !mo.getGPUObject(gCtx).isInputAllocated() ) {
 			mo.acquireRead();
 			acquired = true;
 		}
-		mo.getGPUObject().acquireDeviceRead();
+
+		copied = mo.getGPUObject(gCtx).acquireDeviceRead();
 		if(acquired) {
 			mo.release();
 		}
-		return mo;
+		return new Pair<MatrixObject, Boolean>(mo, copied);
 	}
 	
 	/**
@@ -301,11 +352,11 @@ public class ExecutionContext
 		mo.release();
 	}
 	
-	public void releaseMatrixInputForGPUInstruction(String varName) 
+	public void releaseMatrixInputForGPUInstruction(String varName)
 		throws DMLRuntimeException 
 	{
 		MatrixObject mo = getMatrixObject(varName);
-		mo.getGPUObject().releaseInput();
+		mo.getGPUObject(getGPUContext(0)).releaseInput();
 	}
 	
 	/**
@@ -335,35 +386,20 @@ public class ExecutionContext
 		fo.release();
 	}
 	
+	public ScalarObject getScalarInput(CPOperand input) throws DMLRuntimeException {
+		return getScalarInput(input.getName(), input.getValueType(), input.isLiteral());
+	}
+	
 	public ScalarObject getScalarInput(String name, ValueType vt, boolean isLiteral)
 		throws DMLRuntimeException 
 	{
 		if ( isLiteral ) {
-			switch (vt) {
-			case INT:
-				long intVal = UtilFunctions.parseToLong(name);				
-				IntObject intObj = new IntObject(intVal);
-				return intObj;
-			case DOUBLE:
-				double doubleVal = Double.parseDouble(name);
-				DoubleObject doubleObj = new DoubleObject(doubleVal);
-				return doubleObj;
-			case BOOLEAN:
-				Boolean boolVal = Boolean.parseBoolean(name);
-				BooleanObject boolObj = new BooleanObject(boolVal);
-				return boolObj;
-			case STRING:
-				StringObject stringObj = new StringObject(name);
-				return stringObj;
-			default:
-				throw new DMLRuntimeException("Unknown value type: " + vt + " for variable: " + name);
-			}
+			return ScalarObjectFactory.createScalarObject(vt, name);
 		}
 		else {
 			Data obj = getVariable(name);
-			if (obj == null) {
+			if (obj == null)
 				throw new DMLRuntimeException("Unknown variable: " + name);
-			}
 			return (ScalarObject) obj;
 		}
 	}
@@ -376,10 +412,10 @@ public class ExecutionContext
 	
 	public void releaseMatrixOutputForGPUInstruction(String varName) throws DMLRuntimeException {
 		MatrixObject mo = getMatrixObject(varName);
-		if(mo.getGPUObject() == null || !mo.getGPUObject().isAllocated()) {
+		if(mo.getGPUObject(getGPUContext(0)) == null || !mo.getGPUObject(getGPUContext(0)).isAllocated()) {
 			throw new DMLRuntimeException("No output is allocated on GPU");
 		}
-		mo.getGPUObject().releaseOutput();
+		mo.getGPUObject(getGPUContext(0)).releaseOutput();
 	}
 
 	public void setMatrixOutput(String varName, MatrixBlock outputData) 
@@ -501,7 +537,7 @@ public class ExecutionContext
 		return varlist;
 	}
 
-	public void cleanupMatrixObject(MatrixObject mo) 
+	public void cleanupMatrixObject(MatrixObject mo)
 		throws DMLRuntimeException 
 	{
 		try

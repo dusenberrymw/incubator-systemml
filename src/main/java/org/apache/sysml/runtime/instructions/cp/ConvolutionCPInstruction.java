@@ -21,15 +21,18 @@ package org.apache.sysml.runtime.instructions.cp;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.functionobjects.SwapIndex;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.ConvolutionParameters;
 import org.apache.sysml.runtime.matrix.data.LibMatrixDNN;
+import org.apache.sysml.runtime.matrix.data.LibMatrixNative;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 import org.apache.sysml.runtime.util.ConvolutionUtils;
+import org.apache.sysml.utils.NativeHelper;
 
 public class ConvolutionCPInstruction extends UnaryCPInstruction 
 {	
@@ -44,8 +47,8 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 	public ConvolutionCPInstruction(CPOperand in, CPOperand in2, CPOperand out, String opcode, String istr, int numThreads) throws DMLRuntimeException {
 		super(new ReorgOperator(SwapIndex.getSwapIndexFnObject()), in, out,
 				opcode, istr);
-		if( !(opcode.equals("bias_add") || opcode.equals("relu_backward")) ) {
-			throw new DMLRuntimeException("Incorrect usage. Expected the opcode to be bias_add or relu_backward, but found " + opcode);
+		if( !(opcode.equals("bias_add") || opcode.equals("relu_backward") || opcode.equals("bias_multiply") ) ) {
+			throw new DMLRuntimeException("Incorrect usage. Expected the opcode to be bias_add or bias_multiply or relu_backward, but found " + opcode);
 		}
 		_in2 = in2;
 		_cptype = CPINSTRUCTION_TYPE.Convolution;
@@ -131,7 +134,7 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 			return new ConvolutionCPInstruction(in, out, opcode, str, stride,
 					padding, input_shape, filter_shape, k);
 		} 
-		else if (opcode.equalsIgnoreCase("maxpooling_backward")
+		else if (opcode.equalsIgnoreCase("maxpooling_backward") || opcode.equalsIgnoreCase("relu_maxpooling_backward")
 				|| opcode.equalsIgnoreCase("conv2d")
 				|| opcode.equalsIgnoreCase("conv2d_backward_filter")
 				|| opcode.equalsIgnoreCase("conv2d_backward_data")) {
@@ -195,7 +198,7 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 			return new ConvolutionCPInstruction(in, in2, in3, out, opcode, str, stride,
 					padding, input_shape, filter_shape, k);
 		}
-		else if (opcode.equalsIgnoreCase("bias_add") || opcode.equals("relu_backward")) {
+		else if (opcode.equalsIgnoreCase("bias_add") || opcode.equals("relu_backward") || opcode.equalsIgnoreCase("bias_multiply") ) {
 			InstructionUtils.checkNumFields(parts, 4);
 			CPOperand in = new CPOperand(parts[1]);
 			CPOperand in2 = new CPOperand(parts[2]);
@@ -215,15 +218,13 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 				.getLongValue();
 	}
 	
-	@SuppressWarnings("unused")
 	public void processReluBackwardInstruction(ExecutionContext ec) throws DMLRuntimeException {
 		// (X > 0) * dout
 		MatrixBlock input = ec.getMatrixInput(input1.getName());
 		MatrixBlock dout = ec.getMatrixInput(_in2.getName());
-		MatrixBlock outputBlock =  new MatrixBlock(input.getNumRows(), input.getNumColumns(), 
-			LibMatrixDNN.SUPPORTS_SPARSE_OUTPUTS && (input.isInSparseFormat() || dout.isInSparseFormat()));
+		MatrixBlock outputBlock =  new MatrixBlock(input.getNumRows(), input.getNumColumns(), (input.isInSparseFormat() || dout.isInSparseFormat()));
 		
-		if( !input.isEmptyBlock() && !dout.isEmptyBlock() ) {
+		if( !input.isEmpty() && !dout.isEmpty() ) {
 			outputBlock.allocateDenseOrSparseBlock();
 			LibMatrixDNN.reluBackward(input, dout, outputBlock, _numThreads);
 		}
@@ -243,10 +244,10 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 			throw new DMLRuntimeException("Expected the number of columns of bias matrix to be 1, but found " + bias.getNumColumns());
 		}
 		
-		if(input.isEmptyBlock() && bias.isEmptyBlock()) {
+		if(input.isEmpty() && bias.isEmpty()) {
 			outputBlock = new MatrixBlock(input.getNumRows(), input.getNumColumns(), true);
 		}
-		else if(bias.isEmptyBlock()) {
+		else if(bias.isEmpty()) {
 			outputBlock = new MatrixBlock(input);
 		}
 		else {
@@ -262,12 +263,53 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 		ec.setMatrixOutput(getOutputVariableName(), outputBlock);
 	}
 	
+	public void processBiasMultiplyInstruction(ExecutionContext ec) throws DMLRuntimeException {
+		MatrixBlock input = ec.getMatrixInput(input1.getName());
+		MatrixBlock bias = ec.getMatrixInput(_in2.getName());
+		MatrixBlock outputBlock = null;
+		
+		if(bias.getNumColumns() != 1) {
+			throw new DMLRuntimeException("Expected the number of columns of bias matrix to be 1, but found " + bias.getNumColumns());
+		}
+		
+		if(bias.isEmpty()) {
+			// Anything multiplied by zero is zero
+			outputBlock = new MatrixBlock(input.getNumRows(), input.getNumColumns(), true);
+		}
+		else {
+			// As we always fill the output first with bias
+			outputBlock = new MatrixBlock(input.getNumRows(), input.getNumColumns(), false);
+			outputBlock.allocateDenseBlock();
+			LibMatrixDNN.biasMultiply(input, bias, outputBlock, _numThreads);
+		}
+		
+		// release inputs/outputs
+		ec.releaseMatrixInput(input1.getName());
+		ec.releaseMatrixInput(_in2.getName());
+		ec.setMatrixOutput(getOutputVariableName(), outputBlock);
+	}
+	
+	// Assumption: enableNative && NativeHelper.isNativeLibraryLoaded() is true
+	// This increases the number of native calls. For example:the cases where filter is sparse but input is dense
+	private boolean isFilterSparse(MatrixBlock filter) throws DMLRuntimeException {
+		long numElems = filter.getNumRows()*filter.getNumColumns();
+		// if filter is less than 10 MB in dense format (which handles almost all the cases).
+		// In fact, using threshold of 1 MB is still sufficient for common CNNs.
+		if(filter.isInSparseFormat() && numElems < 10e+6)
+			filter.sparseToDense(); 
+		return filter.isInSparseFormat();
+	}
+	
 	
 	@Override
 	public void processInstruction(ExecutionContext ec)
 			throws DMLRuntimeException {
 		if (instOpcode.equalsIgnoreCase("bias_add")) {
 			processBiasAddInstruction(ec);
+			return;
+		}
+		else if (instOpcode.equalsIgnoreCase("bias_multiply")) {
+			processBiasMultiplyInstruction(ec);
 			return;
 		}
 		else if (instOpcode.equalsIgnoreCase("relu_backward")) {
@@ -296,8 +338,9 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 		int Q = (int) ConvolutionUtils.getQ(W, S, stride_w, pad_w);
 		
 		ConvolutionParameters params = new ConvolutionParameters(N, C, H, W, K, R, S, stride_h, stride_w, pad_h, pad_w, _numThreads);
+		params.enableNative = NativeHelper.isNativeLibraryLoaded();
 		if (instOpcode.equalsIgnoreCase("maxpooling") || instOpcode.equalsIgnoreCase("relu_maxpooling")) {
-			if(matBlock.isEmptyBlock()) {
+			if(matBlock.isEmpty()) {
 				outputBlock = new MatrixBlock(N, C*P*Q, true);
 			}
 			else {
@@ -307,62 +350,92 @@ public class ConvolutionCPInstruction extends UnaryCPInstruction
 				LibMatrixDNN.maxpooling(matBlock, outputBlock, params);
 			}
 		}
-		else if (instOpcode.equalsIgnoreCase("maxpooling_backward")) {
+		else if (instOpcode.equalsIgnoreCase("maxpooling_backward") || instOpcode.equalsIgnoreCase("relu_maxpooling_backward")) {
 			MatrixBlock dout = ec.getMatrixInput(_in2.getName());
-			if(matBlock.isEmptyBlock() || dout.isEmptyBlock()) {
+			if(matBlock.isEmpty() || dout.isEmpty()) {
 				outputBlock = new MatrixBlock(N, C*H*W, true);
 			}
 			else {
 				outputBlock = getDenseOutputBlock(N, C*H*W);
-				LibMatrixDNN.maxpoolingBackward(matBlock, dout, outputBlock, params);
+				if(instOpcode.equalsIgnoreCase("maxpooling_backward"))
+					LibMatrixDNN.maxpoolingBackward(matBlock, dout, outputBlock, params, false);
+				else
+					LibMatrixDNN.maxpoolingBackward(matBlock, dout, outputBlock, params, true);
 			}
 			ec.releaseMatrixInput(_in2.getName());
 		}
 		else if (instOpcode.equalsIgnoreCase("conv2d")) {
 			MatrixBlock filter = ec.getMatrixInput(_in2.getName());
-			if(filter.isEmptyBlock() || matBlock.isEmptyBlock()) {
+			if(filter.isEmpty() || matBlock.isEmpty()) {
 				outputBlock = new MatrixBlock(N, K*P*Q, true);
 			}
 			else {
 				outputBlock = getDenseOutputBlock(N, K*P*Q);
-				LibMatrixDNN.conv2d(matBlock, filter, outputBlock, params);
+				if(params.enableNative && !isFilterSparse(filter) && !matBlock.isInSparseFormat())
+					LibMatrixNative.conv2d(matBlock, filter, outputBlock, params);
+				else
+					LibMatrixDNN.conv2d(matBlock, filter, outputBlock, params);
 			}
 			ec.releaseMatrixInput(_in2.getName());
 		}
 		else if (instOpcode.equalsIgnoreCase("conv2d_bias_add")) {
 			MatrixBlock filter = ec.getMatrixInput(_in3.getName());
 			MatrixBlock bias = ec.getMatrixInput(_in2.getName());
-			if((filter.isEmptyBlock() || matBlock.isEmptyBlock()) && bias.isEmptyBlock()) {
+			if(bias.getNumRows() != params.K || bias.getNumColumns() != 1) {
+				throw new DMLRuntimeException("Incorrect shape of bias matrix: [" + bias.getNumRows() + " " + bias.getNumColumns() + "]. "
+						+ "Expected: [" + params.K + ", 1]");
+			}
+			boolean isOutputConvEmpty = filter.isEmpty() || matBlock.isEmpty();
+			if(isOutputConvEmpty && bias.isEmpty()) {
+				// bias_add(empty mb, empty mb) = empty mb
 				outputBlock = new MatrixBlock(N, K*P*Q, true);
+			}
+			else if(isOutputConvEmpty && !bias.isEmpty()) {
+				// Add bias to empty output block
+				// bias_add(empty mb, bias)
+				outputBlock = getDenseOutputBlock(N, K*P*Q);
+				for(int n = 0;  n < params.N; n++) 
+					ConvolutionUtils.fillBias(bias, outputBlock.getDenseBlock(), n, n+1, params.N, params.K, params.P*params.Q);
 			}
 			else {
 				outputBlock = getDenseOutputBlock(N, K*P*Q);
-				if(!bias.isEmptyBlock())
+				if(!bias.isEmpty()) {
+					// Handle situation where both input and filter are non empty, but bias is empty
 					params.bias = bias;
-				LibMatrixDNN.conv2d(matBlock, filter, outputBlock, params);
+				}
+				if(params.enableNative && !isFilterSparse(filter) && !matBlock.isInSparseFormat())
+					LibMatrixNative.conv2d(matBlock, filter, outputBlock, params);
+				else
+					LibMatrixDNN.conv2d(matBlock, filter, outputBlock, params);
 			}
 			ec.releaseMatrixInput(_in3.getName());
 			ec.releaseMatrixInput(_in2.getName());
 		}
 		else if (instOpcode.equalsIgnoreCase("conv2d_backward_filter")) {
 			MatrixBlock dout = ec.getMatrixInput(_in2.getName());
-			if(dout.isEmptyBlock() || matBlock.isEmptyBlock()) {
+			if(dout.isEmpty() || matBlock.isEmpty()) {
 				outputBlock = new MatrixBlock(K, C*R*S, true);
 			}
 			else {
 				outputBlock = getDenseOutputBlock(K, C*R*S);
-				LibMatrixDNN.conv2dBackwardFilter(matBlock, dout, outputBlock, params);
+				if(params.enableNative && !matBlock.isInSparseFormat() && !dout.isInSparseFormat())
+					LibMatrixNative.conv2dBackwardFilter(matBlock, dout, outputBlock, params);
+				else
+					LibMatrixDNN.conv2dBackwardFilter(matBlock, dout, outputBlock, params);
 			}
 			ec.releaseMatrixInput(_in2.getName());
 		}
 		else if (instOpcode.equalsIgnoreCase("conv2d_backward_data")) {
 			MatrixBlock dout = ec.getMatrixInput(_in2.getName());
-			if(dout.isEmptyBlock() || matBlock.isEmptyBlock()) {
+			if(dout.isEmpty() || matBlock.isEmpty()) {
 				outputBlock = new MatrixBlock(N, C * H * W, true);
 			}
 			else {
 				outputBlock = getDenseOutputBlock(N, C * H * W);
-				LibMatrixDNN.conv2dBackwardData(matBlock, dout, outputBlock, params);
+				if(params.enableNative && !isFilterSparse(matBlock) && !dout.isInSparseFormat())
+					LibMatrixNative.conv2dBackwardData(matBlock, dout, outputBlock, params);
+				else
+					LibMatrixDNN.conv2dBackwardData(matBlock, dout, outputBlock, params);
 			}
 			ec.releaseMatrixInput(_in2.getName());
 		}
