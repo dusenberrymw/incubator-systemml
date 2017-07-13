@@ -23,9 +23,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import org.junit.Test;
-
-import org.apache.sysml.api.DMLException;
 import org.apache.sysml.api.jmlc.Connection;
 import org.apache.sysml.api.jmlc.PreparedScript;
 import org.apache.sysml.api.jmlc.ResultVariables;
@@ -37,19 +34,16 @@ import org.apache.sysml.runtime.util.DataConverter;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
+import org.junit.Test;
 
-/**
- * 
- * 
- */
-public class SystemTMulticlassSVMScoreTest extends AutomatedTestBase 
+public class MulticlassSVMScoreTest extends AutomatedTestBase
 {
 	
 	private final static String TEST_NAME = "m-svm-score";
 	private final static String TEST_DIR = "functions/jmlc/";
 	private final static String MODEL_FILE = "sentiment_model.mtx";
 	private final static double eps = 1e-10;
-	private final static String TEST_CLASS_DIR = TEST_DIR + SystemTMulticlassSVMScoreTest.class.getSimpleName() + "/";
+	private final static String TEST_CLASS_DIR = TEST_DIR + MulticlassSVMScoreTest.class.getSimpleName() + "/";
 	
 	private final static int rows = 107;
 	private final static int cols = 46; //fixed
@@ -80,17 +74,9 @@ public class SystemTMulticlassSVMScoreTest extends AutomatedTestBase
 		throws IOException
 	{
 		//should apply diag_mm rewrite
-		runJMLCMulticlassTest(false);
+		runJMLCMulticlassTest(true);
 	}
-	
 
-	/**
-	 * 
-	 * @param sparseM1
-	 * @param sparseM2
-	 * @param instType
-	 * @throws IOException 
-	 */
 	private void runJMLCMulticlassTest( boolean sparse ) 
 		throws IOException
 	{	
@@ -131,13 +117,6 @@ public class SystemTMulticlassSVMScoreTest extends AutomatedTestBase
 		}
 	}
 
-	/**
-	 * 
-	 * @param X
-	 * @return
-	 * @throws DMLException
-	 * @throws IOException
-	 */
 	private ArrayList<double[][]> execDMLScriptviaJMLC( ArrayList<double[][]> X) 
 		throws IOException
 	{
@@ -191,15 +170,7 @@ public class SystemTMulticlassSVMScoreTest extends AutomatedTestBase
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param num
-	 * @param rows
-	 * @param cols
-	 * @param sparsity
-	 * @return
-	 */
+
 	private ArrayList<double[][]> generateInputs( int num, int rows, int cols, double sparsity )
 	{
 		ArrayList<double[][]> ret = new ArrayList<double[][]>();

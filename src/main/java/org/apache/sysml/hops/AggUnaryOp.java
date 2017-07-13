@@ -20,7 +20,6 @@
 package org.apache.sysml.hops;
 
 import org.apache.sysml.api.DMLScript;
-import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggBinaryOp.SparkAggType;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
@@ -39,6 +38,7 @@ import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 
@@ -149,15 +149,16 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 				}				
 				else { //general case		
 					int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
-					if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET)) {
+					if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < GPUContextPool
+							.initialGPUMemBudget())) {
 						// Only implemented methods for GPU
-						if (			 (_op == AggOp.SUM 			&& (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
-										|| (_op == AggOp.SUM_SQ 	&& (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
-										|| (_op == AggOp.MAX 			&& (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
-										|| (_op == AggOp.MIN 			&& (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
-										|| (_op == AggOp.MEAN 		&& (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
-										|| (_op == AggOp.VAR 		&& (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
-										|| (_op == AggOp.PROD 		&& (_direction == Direction.RowCol))){
+						if ((_op == AggOp.SUM    && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
+						 || (_op == AggOp.SUM_SQ && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
+						 || (_op == AggOp.MAX    && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
+						 || (_op == AggOp.MIN    && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
+						 || (_op == AggOp.MEAN   && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
+						 || (_op == AggOp.VAR    && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col))
+						 || (_op == AggOp.PROD   && (_direction == Direction.RowCol))){
 							et = ExecType.GPU;
 							k = 1;
 						}
@@ -448,9 +449,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		}
 		
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE ) {
-			setRequiresRecompile();
-		}
+		setRequiresRecompileIfNecessary();
 		
 		return _etype;
 	}

@@ -303,7 +303,7 @@ public class FunctionCallSizeInfo
 			sb.append(getFunctionCallCount(fkey));
 			if( !_fcandSafeNNZ.get(fkey).isEmpty() ) {
 				sb.append("\n----");
-				sb.append(Arrays.toString(_fcandSafeNNZ.get(fkey).toArray(new Long[0])));
+				sb.append(Arrays.toString(_fcandSafeNNZ.get(fkey).toArray(new Integer[0])));
 			}
 			sb.append("\n");
 		}
@@ -332,6 +332,21 @@ public class FunctionCallSizeInfo
 		
 		sb.append("Valid scalars for propagation: \n");
 		for( Entry<String, Set<Integer>> e : _fSafeLiterals.entrySet() ) {
+			sb.append("--");
+			sb.append(e.getKey());
+			sb.append(": ");
+			for( Integer pos : e.getValue() ) {
+				sb.append(pos);
+				sb.append(":");
+				sb.append(_fgraph.getFunctionCalls(e.getKey())
+					.get(0).getInput().get(pos).getName());
+				sb.append(" ");
+			}
+			sb.append("\n");
+		}
+		
+		sb.append("Valid #non-zeros for propagation: \n");
+		for( Entry<String, Set<Integer>> e : _fcandSafeNNZ.entrySet() ) {
 			sb.append("--");
 			sb.append(e.getKey());
 			sb.append(": ");

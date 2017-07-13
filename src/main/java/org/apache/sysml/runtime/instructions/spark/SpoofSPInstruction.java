@@ -200,11 +200,16 @@ public class SpoofSPInstruction extends SPInstruction
 		else if( _class.getSuperclass() == SpoofRowwise.class ) { //row aggregate operator
 			SpoofRowwise op = (SpoofRowwise) CodegenUtils.createInstance(_class); 	
 			RowwiseFunction fmmc = new RowwiseFunction(_class.getName(), _classBytes, bcMatrices, scalars, (int)mcIn.getCols());
-			out = in.mapPartitionsToPair(fmmc, op.getRowType()==RowType.ROW_AGG);
+			out = in.mapPartitionsToPair(fmmc, op.getRowType()==RowType.ROW_AGG
+					|| op.getRowType() == RowType.NO_AGG);
 			
-			if( op.getRowType().isColumnAgg() ) {
-				MatrixBlock tmpMB = RDDAggregateUtils.sumStable(out);		
-				sec.setMatrixOutput(_out.getName(), tmpMB);
+			if( op.getRowType().isColumnAgg() || op.getRowType()==RowType.FULL_AGG ) {
+				MatrixBlock tmpMB = RDDAggregateUtils.sumStable(out);
+				if( op.getRowType().isColumnAgg() )
+					sec.setMatrixOutput(_out.getName(), tmpMB);
+				else
+					sec.setScalarOutput(_out.getName(), 
+						new DoubleObject(tmpMB.quickGetValue(0, 0)));
 			}
 			else //row-agg or no-agg 
 			{
@@ -308,10 +313,12 @@ public class SpoofSPInstruction extends SPInstruction
 			}
 			
 			//setup local memory for reuse
-			LibSpoofPrimitives.setupThreadLocalMemory(_op.getNumIntermediates(), _clen);
+			int clen2 = (int) (_op.getRowType().isRowTypeB1() ? _vectors.get(0).getNumCols() : -1);
+			LibSpoofPrimitives.setupThreadLocalMemory(_op.getNumIntermediates(), _clen, clen2);
 			
 			ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
-			boolean aggIncr = _op.getRowType().isColumnAgg(); //aggregate entire partition to avoid allocations
+			boolean aggIncr = (_op.getRowType().isColumnAgg() //aggregate entire partition
+				|| _op.getRowType() == RowType.FULL_AGG); 
 			MatrixBlock blkOut = aggIncr ? new MatrixBlock() : null;
 			
 			while( arg.hasNext() ) {

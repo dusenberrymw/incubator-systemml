@@ -32,6 +32,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.wink.json4j.JSONObject;
 import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.api.jmlc.JMLCProxy;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
@@ -101,9 +102,11 @@ import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.util.MapReduceTool;
+import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.utils.Explain;
 import org.apache.sysml.utils.Explain.ExplainType;
 import org.apache.sysml.utils.JSONHelper;
+import org.apache.sysml.utils.MLContextProxy;
 
 /**
  * Dynamic recompilation of hop dags to runtime instructions, which includes the 
@@ -234,12 +237,18 @@ public class Recompiler
 			}		
 			
 			// generate runtime instructions (incl piggybacking)
-			newInst = dag.getJobs(sb, ConfigurationManager.getDMLConfig());	
+			newInst = dag.getJobs(sb, ConfigurationManager.getDMLConfig());
 		}
 		
 		// replace thread ids in new instructions
 		if( tid != 0 ) //only in parfor context
 			newInst = ProgramConverter.createDeepCopyInstructionSet(newInst, tid, -1, null, null, null, false, false);
+		
+		// remove writes if called through mlcontext or jmlc 
+		if( MLContextProxy.isActive() )
+			newInst = MLContextProxy.performCleanupAfterRecompilation(newInst);
+		else if( JMLCProxy.isActive() )
+			newInst = JMLCProxy.performCleanupAfterRecompilation(newInst);
 		
 		// explain recompiled hops / instructions
 		if( DMLScript.EXPLAIN == ExplainType.RECOMPILE_HOPS ){
@@ -1569,11 +1578,11 @@ public class Recompiler
 				
 				//special case increment 
 				if ( from!=Double.MAX_VALUE && to!=Double.MAX_VALUE ) {
-					incr = ( from >= to && incr==1 ) ? -1.0 : 1.0;
+					incr *= ((from > to && incr > 0) || (from < to && incr < 0)) ? -1.0 : 1.0;
 				}
 				
 				if ( from!=Double.MAX_VALUE && to!=Double.MAX_VALUE && incr!=Double.MAX_VALUE ) {
-					d.setDim1( 1 + (long)Math.floor((to-from)/incr) );
+					d.setDim1( UtilFunctions.getSeqLength(from, to, incr) );
 					d.setDim2( 1 );
 					d.setIncrementValue( incr );
 				}

@@ -56,7 +56,7 @@ public class IOUtilFunctions
 	private static final Log LOG = LogFactory.getLog(UtilFunctions.class.getName());
 
 	private static final char CSV_QUOTE_CHAR = '"';
-
+	
 	public static FileSystem getFileSystem(String fname) throws IOException {
 		return getFileSystem(new Path(fname),
 			ConfigurationManager.getCachedJobConf());
@@ -77,7 +77,7 @@ public class IOUtilFunctions
 		String scheme1 = path1.toUri().getScheme();
 		String scheme2 = path2.toUri().getScheme();
 		return (scheme1 == null && scheme2 == null)
-			|| scheme1.equals(scheme2);
+			|| (scheme1 != null && scheme1.equals(scheme2));
 	}
 	
 	public static boolean isObjectStoreFileScheme(Path path) {
@@ -86,6 +86,10 @@ public class IOUtilFunctions
 		String scheme = path.toUri().getScheme();
 		//capture multiple alternatives s3, s3n, s3a, swift, swift2d
 		return scheme.startsWith("s3") || scheme.startsWith("swift");
+	}
+	
+	public static String getPartFileName(int pos) {
+		return String.format("0-m-%05d", pos);
 	}
 	
 	public static void closeSilently( Closeable io ) {
@@ -464,7 +468,7 @@ public class IOUtilFunctions
 			FileStatus[] dStatus = fs.listStatus(file);
 			for( FileStatus fdStatus : dStatus )
 				if( !fdStatus.getPath().getName().startsWith("_") //skip internal files
-					&& !fdStatus.getPath().equals(file.toString()+".mtd") )  //mtd file
+					&& !fdStatus.getPath().toString().equals(file.toString()+".mtd") ) //mtd file
 					tmp.add(fdStatus.getPath());
 			ret = tmp.toArray(new Path[0]);
 		}

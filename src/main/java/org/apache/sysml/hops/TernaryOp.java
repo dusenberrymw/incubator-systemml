@@ -42,6 +42,7 @@ import org.apache.sysml.lops.PartialAggregate.CorrectionLocationType;
 import org.apache.sysml.parser.Statement;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 /** Primary use cases for now, are
@@ -649,7 +650,8 @@ public class TernaryOp extends Hop
 			throw new HopsException("Unexpected operation: " + _op + ", expecting " + OpOp3.PLUS_MULT + " or" +  OpOp3.MINUS_MULT);
 		
 		ExecType et = null;
-		if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET) )
+		if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < GPUContextPool
+				.initialGPUMemBudget()) )
 			et = ExecType.GPU;
 		else
 			et = optFindExecType();
@@ -847,12 +849,12 @@ public class TernaryOp extends Hop
 		}
 
 		//mark for recompile (forever)
-		// Necessary condition for recompilation is unknown dimensions.
-		// When execType=CP, it is marked for recompilation only when additional
-		// dimension inputs are provided (and those values are unknown at initial compile time).
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) ) {
-			if ( _etype==REMOTE || (_etype == ExecType.CP && _dimInputsPresent))
-				setRequiresRecompile();
+		// additional condition: when execType=CP and additional dimension inputs 
+		// are provided (and those values are unknown at initial compile time).
+		setRequiresRecompileIfNecessary();
+		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) 
+			&& _etype == ExecType.CP && _dimInputsPresent) {
+			setRequiresRecompile();
 		}
 		
 		return _etype;
@@ -1077,10 +1079,8 @@ public class TernaryOp extends Hop
 				}			
 			}
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new RuntimeException(ex);
-			//ret = false;
 		}
 		
 		return ret;

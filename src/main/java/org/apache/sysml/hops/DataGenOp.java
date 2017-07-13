@@ -37,6 +37,7 @@ import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.parser.Statement;
 import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.UtilFunctions;
 
 /**
  * A DataGenOp can be rand (or matrix constructor), sequence, and sample -
@@ -292,9 +293,8 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		}
 
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE )
-			setRequiresRecompile();
-
+		setRequiresRecompileIfNecessary();
+		
 		//always force string initialization into CP (not supported in MR)
 		//similarly, sample is currently not supported in MR either
 		if( _op == DataGenMethod.SINIT )
@@ -344,7 +344,8 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 			}
 			
 			if ( fromKnown && toKnown && incrKnown ) {
-				setDim1(1 + (long)Math.floor(((double)(to-from))/incr));
+				//TODO fix parser exception handling and enable check by default
+				setDim1(UtilFunctions.getSeqLength(from, to, incr, false));
 				setDim2(1);
 				_incr = incr;
 			}

@@ -62,8 +62,6 @@ import static jcuda.runtime.cudaMemcpyKind.cudaMemcpyDeviceToDevice;
 import static jcuda.runtime.cudaMemcpyKind.cudaMemcpyDeviceToHost;
 import static jcuda.runtime.cudaMemcpyKind.cudaMemcpyHostToDevice;
 
-import jcuda.jcusparse.cusparseAction;
-import jcuda.jcusparse.cusparseIndexBase;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.DMLScript;
@@ -78,12 +76,16 @@ import org.apache.sysml.runtime.functionobjects.Equals;
 import org.apache.sysml.runtime.functionobjects.GreaterThan;
 import org.apache.sysml.runtime.functionobjects.GreaterThanEquals;
 import org.apache.sysml.runtime.functionobjects.IndexFunction;
+import org.apache.sysml.runtime.functionobjects.IntegerDivide;
 import org.apache.sysml.runtime.functionobjects.KahanPlus;
 import org.apache.sysml.runtime.functionobjects.KahanPlusSq;
 import org.apache.sysml.runtime.functionobjects.LessThan;
 import org.apache.sysml.runtime.functionobjects.LessThanEquals;
 import org.apache.sysml.runtime.functionobjects.Mean;
 import org.apache.sysml.runtime.functionobjects.Minus;
+import org.apache.sysml.runtime.functionobjects.Minus1Multiply;
+import org.apache.sysml.runtime.functionobjects.MinusNz;
+import org.apache.sysml.runtime.functionobjects.Modulus;
 import org.apache.sysml.runtime.functionobjects.Multiply;
 import org.apache.sysml.runtime.functionobjects.Multiply2;
 import org.apache.sysml.runtime.functionobjects.NotEquals;
@@ -133,7 +135,9 @@ import jcuda.jcudnn.cudnnStatus;
 import jcuda.jcudnn.cudnnTensorDescriptor;
 import jcuda.jcusolver.JCusolverDn;
 import jcuda.jcusparse.JCusparse;
+import jcuda.jcusparse.cusparseAction;
 import jcuda.jcusparse.cusparseHandle;
+import jcuda.jcusparse.cusparseIndexBase;
 
 /**
  * All CUDA kernels and library calls are redirected through this class
@@ -2313,15 +2317,48 @@ public class LibMatrixCUDA {
 	//********************************************************************/
 
 	/**
-	 * Entry point to perform elementwise matrix-scalar operation specified by op
+	 * Entry point to perform elementwise matrix-scalar relational operation specified by op
 	 *
-	 * @param ec execution context
-	 * @param gCtx a valid {@link GPUContext}
-	 * @param instName the invoking instruction's name for record {@link Statistics}.
-	 * @param in input matrix
+	 * @param ec         execution context
+	 * @param gCtx       a valid {@link GPUContext}
+	 * @param instName   the invoking instruction's name for record {@link Statistics}.
+	 * @param in         input matrix
 	 * @param outputName output matrix name
+	 * @param op         scalar operator
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
+	 */
+	public static void matrixScalarRelational(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in, String outputName, ScalarOperator op) throws DMLRuntimeException {
+		if (ec.getGPUContext(0) != gCtx)
+			throw new DMLRuntimeException("GPU : Invalid internal state, the GPUContext set with the ExecutionContext is not the same used to run this LibMatrixCUDA function");
+		double constant = op.getConstant();
+		LOG.trace("GPU : matrixScalarRelational, scalar: " + constant + ", GPUContext=" + gCtx);
+
+		Pointer A, C;
+		if (isSparseAndEmpty(gCtx, in)) {
+			setOutputToConstant(ec, gCtx, instName, op.executeScalar(0.0), outputName);
+			return;
+		} else {
+			A = getDensePointer(gCtx, in, instName);
+			MatrixObject out = getDenseMatrixOutputForGPUInstruction(ec, instName, outputName);	// Allocated the dense output matrix
+			C = getDensePointer(gCtx, out, instName);
+		}
+
+		int rlenA = (int) in.getNumRows();
+		int clenA = (int) in.getNumColumns();
+
+		matrixScalarOp(gCtx, instName, A, constant, rlenA, clenA, C, op);
+	}
+
+	/**
+	 * Entry point to perform elementwise matrix-scalar arithmetic operation specified by op
+	 *
+	 * @param ec                execution context
+	 * @param gCtx              a valid {@link GPUContext}
+	 * @param instName          the invoking instruction's name for record {@link Statistics}.
+	 * @param in                input matrix
+	 * @param outputName        output matrix name
 	 * @param isInputTransposed true if input transposed
-	 * @param op scalar operator
+	 * @param op                scalar operator
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public static void matrixScalarArithmetic(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in, String outputName, boolean isInputTransposed, ScalarOperator op) throws DMLRuntimeException {
@@ -2338,6 +2375,7 @@ public class LibMatrixCUDA {
 				}
 				else if(op.fn instanceof Multiply || op.fn instanceof And) {
 					setOutputToConstant(ec, gCtx, instName, 0.0, outputName);
+
 				}
 				else if(op.fn instanceof Power) {
 					setOutputToConstant(ec, gCtx, instName, 1.0, outputName);
@@ -2389,8 +2427,44 @@ public class LibMatrixCUDA {
 		//}
 	}
 
+
 	/**
-	 * Performs elementwise operation specified by op of two input matrices in1 and in2
+	 * Performs elementwise operation relational specified by op of two input matrices in1 and in2
+	 *
+	 * @param ec execution context
+	 * @param gCtx a valid {@link GPUContext}
+	 * @param instName the invoking instruction's name for record {@link Statistics}.
+	 * @param in1 input matrix 1
+	 * @param in2 input matrix 2
+	 * @param outputName output matrix name
+	 * @param op binary operator
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
+	 */
+	public static void matrixMatrixRelational(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in1, MatrixObject in2,
+			String outputName, BinaryOperator op) throws DMLRuntimeException {
+
+		if (ec.getGPUContext(0) != gCtx)
+			throw new DMLRuntimeException("GPU : Invalid internal state, the GPUContext set with the ExecutionContext is not the same used to run this LibMatrixCUDA function");
+
+		boolean in1SparseAndEmpty = isSparseAndEmpty(gCtx, in1);
+		boolean in2SparseAndEmpty = isSparseAndEmpty(gCtx, in2);
+		if (in1SparseAndEmpty && in2SparseAndEmpty) {
+			if (op.fn instanceof LessThan || op.fn instanceof GreaterThan || op.fn instanceof NotEquals) {
+				setOutputToConstant(ec, gCtx, instName, 0.0, outputName);
+			} else if (op.fn instanceof LessThanEquals || op.fn instanceof GreaterThanEquals || op.fn instanceof Equals) {
+				setOutputToConstant(ec, gCtx, instName, 1.0, outputName);
+			}
+		} else if (in1SparseAndEmpty) {
+			matrixScalarRelational(ec, gCtx, instName, in2, outputName, new LeftScalarOperator(op.fn, 0.0));
+		} else if (in2SparseAndEmpty) {
+			matrixScalarRelational(ec, gCtx, instName, in1, outputName, new RightScalarOperator(op.fn, 0.0));
+		} else {
+			matrixMatrixOp(ec, gCtx, instName, in1, in2, outputName, false, false, op);
+		}
+	}
+
+	/**
+	 * Performs elementwise arithmetic operation specified by op of two input matrices in1 and in2
 	 *
 	 * @param ec execution context
 	 * @param gCtx a valid {@link GPUContext}
@@ -2403,7 +2477,7 @@ public class LibMatrixCUDA {
 	 * @param op binary operator
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public static void matrixScalarArithmetic(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in1, MatrixObject in2,
+	public static void matrixMatrixArithmetic(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in1, MatrixObject in2,
 																						String outputName, boolean isLeftTransposed, boolean isRightTransposed, BinaryOperator op) throws DMLRuntimeException {
 		if (ec.getGPUContext(0) != gCtx)
 			throw new DMLRuntimeException("GPU : Invalid internal state, the GPUContext set with the ExecutionContext is not the same used to run this LibMatrixCUDA function");
@@ -2452,24 +2526,25 @@ public class LibMatrixCUDA {
 		int clenA = (int) in.getNumColumns();
 		Pointer A = getDensePointer(gCtx, in, instName); // TODO: FIXME: Implement sparse binCellSparseScalarOp kernel
 		double scalar = op.getConstant();
-		MatrixObject out = ec.getMatrixObject(outputName);
-		getDenseMatrixOutputForGPUInstruction(ec, instName, outputName);	// Allocated the dense output matrix
+		// MatrixObject out = ec.getMatrixObject(outputName);
+		MatrixObject out = getDenseMatrixOutputForGPUInstruction(ec, instName, outputName);	// Allocated the dense output matrix
 		Pointer C = getDensePointer(gCtx, out, instName);
 		matrixScalarOp(gCtx, instName, A, scalar, rlenA, clenA, C, op);
 	}
 
 	/**
-	 * Helper method to launch binary scalar-matrix arithmetic operations CUDA kernel.
-	 * This method is isolated to be taken advatage of from other operations
+	 * Helper method to launch binary scalar-matrix arithmetic/relational operations CUDA kernel.
+	 * This method is isolated to be taken advantage of from other operations
 	 * as it accepts JCuda {@link Pointer} instances instead of {@link MatrixObject} instances.
-	 * @param gCtx a valid {@link GPUContext}
+	 *
+	 * @param gCtx     a valid {@link GPUContext}
 	 * @param instName the invoking instruction's name for record {@link Statistics}.
-	 * @param a					the dense input matrix (allocated on GPU)
-	 * @param scalar		the scalar value to do the op
-	 * @param rlenA			row length of matrix a
-	 * @param clenA			column lenght of matrix a
-	 * @param c					the dense output matrix
-	 * @param op				operation to perform
+	 * @param a        the dense input matrix (allocated on GPU)
+	 * @param scalar   the scalar value to do the op
+	 * @param rlenA    row length of matrix a
+	 * @param clenA    column lenght of matrix a
+	 * @param c        the dense output matrix
+	 * @param op       operation to perform
 	 * @throws DMLRuntimeException throws runtime exception
 	 */
 	private static void matrixScalarOp(GPUContext gCtx, String instName, Pointer a, double scalar, int rlenA, int clenA, Pointer c, ScalarOperator op) throws DMLRuntimeException {
@@ -2486,15 +2561,16 @@ public class LibMatrixCUDA {
 
 	/**
 	 * Utility to launch binary cellwise matrix-matrix operations CUDA kernel
-	 * @param gCtx a valid {@link GPUContext}
-	 * @param ec execution context
-	 * @param instName the invoking instruction's name for record {@link Statistics}.
-	 * @param in1 left input matrix
-	 * @param in2 right input matrix
-	 * @param outputName output variable name
-	 * @param isLeftTransposed true if left matrix is transposed
+	 *
+	 * @param gCtx              a valid {@link GPUContext}
+	 * @param ec                execution context
+	 * @param instName          the invoking instruction's name for record {@link Statistics}.
+	 * @param in1               left input matrix
+	 * @param in2               right input matrix
+	 * @param outputName        output variable name
+	 * @param isLeftTransposed  true if left matrix is transposed
 	 * @param isRightTransposed true if right matrix is transposed
-	 * @param op operator
+	 * @param op                operator
 	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private static void matrixMatrixOp(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in1, MatrixObject in2,
@@ -2514,8 +2590,10 @@ public class LibMatrixCUDA {
 			MatrixObject out = ec.getMatrixObject(outputName);
 			ec.allocateGPUMatrixObject(outputName);
 			// When both inputs are empty, the output is empty too (except in the case of division)
-			if (op.fn instanceof Divide) {
+			if (op.fn instanceof Divide || op.fn instanceof IntegerDivide || op.fn instanceof Modulus) {
 				out.getGPUObject(gCtx).allocateAndFillDense(Double.NaN);
+			} else if (op.fn instanceof Minus1Multiply) {
+				out.getGPUObject(gCtx).allocateAndFillDense(1.0);
 			} else {
 				out.getGPUObject(gCtx).allocateSparseAndEmpty();
 			}
@@ -2673,19 +2751,21 @@ public class LibMatrixCUDA {
 		if (ec.getGPUContext(0) != gCtx)
 			throw new DMLRuntimeException("GPU : Invalid internal state, the GPUContext set with the ExecutionContext is not the same used to run this LibMatrixCUDA function");
 		if(constant == 0) {
-			// TODO: Create sparse empty block instead
+			getSparseMatrixOutputForGPUInstruction(ec, 0, instName, outputName);
+		} else {
+			//MatrixObject out = ec.getMatrixObject(outputName);
+			MatrixObject out = getDenseMatrixOutputForGPUInstruction(ec, instName, outputName);    // Allocated the dense output matrix
+			Pointer A = getDensePointer(gCtx, out, instName);
+			int rlen = (int) out.getNumRows();
+			int clen = (int) out.getNumColumns();
+			long t0 = 0;
+			if (GPUStatistics.DISPLAY_STATISTICS)
+				t0 = System.nanoTime();
+			int size = rlen * clen;
+			getCudaKernels(gCtx).launchKernel("fill", ExecutionConfig.getConfigForSimpleVectorOperations(size), A, constant, size);
+			if (GPUStatistics.DISPLAY_STATISTICS)
+				GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_FILL_KERNEL, System.nanoTime() - t0);
 		}
-		MatrixObject out = ec.getMatrixObject(outputName);
-		getDenseMatrixOutputForGPUInstruction(ec, instName, outputName);	// Allocated the dense output matrix
-		Pointer A = getDensePointer(gCtx, out, instName);
-		int rlen = (int) out.getNumRows();
-		int clen = (int) out.getNumColumns();
-		long t0=0;
-		if (GPUStatistics.DISPLAY_STATISTICS) t0 = System.nanoTime();
-		int size = rlen * clen;
-		getCudaKernels(gCtx).launchKernel("fill", ExecutionConfig.getConfigForSimpleVectorOperations(size),
-						A, constant, size);
-		if (GPUStatistics.DISPLAY_STATISTICS) GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_FILL_KERNEL, System.nanoTime() - t0);
 	}
 
 	/**
@@ -2711,7 +2791,8 @@ public class LibMatrixCUDA {
 	 * and the appropriate binary operation is performed on the GPU.
 	 * op = {0=plus, 1=minus, 2=multiply, 3=divide, 4=power,
 	 * 5=less, 6=lessequal, 7=greater, 8=greaterequal, 9=equal, 10=notequal,
-	 * 11=min, 12=max, 13=and, 14=or, 15=log}
+	 * 11=min, 12=max, 13=and, 14=or, 15=minus1multiply, 16=minusnz,
+	 * 17=modulus, 18=integer division}
 	 */
 	private static int getBinaryOp(ValueFunction fn) throws DMLRuntimeException {
 		if(fn instanceof Plus) return 0;
@@ -2729,6 +2810,10 @@ public class LibMatrixCUDA {
 		else if(fn instanceof Or) return 14;
 		else if(fn instanceof Multiply2) return 2;
 		else if(fn instanceof Power2) return 4;
+		else if(fn instanceof Minus1Multiply) return 15;
+		else if(fn instanceof MinusNz) return 16;
+		else if(fn instanceof Modulus) return 17;
+		else if(fn instanceof IntegerDivide) return 18;
 
 		throw new DMLRuntimeException("The given value function is not supported:" + fn.getClass().getName());
 	}
@@ -3261,7 +3346,7 @@ public class LibMatrixCUDA {
 
 			// step 4: compute QR factorization
             Pointer work = gCtx.allocate(instName, lwork[0] * Sizeof.DOUBLE);
-            Pointer tau = gCtx.allocate(instName, Math.max(m, m) * Sizeof.DOUBLE);
+            Pointer tau = gCtx.allocate(instName, m * Sizeof.DOUBLE);
             Pointer devInfo = gCtx.allocate(Sizeof.INT);
 			if (GPUStatistics.DISPLAY_STATISTICS) t0 = System.nanoTime();
 			JCusolverDn.cusolverDnDgeqrf(gCtx.getCusolverDnHandle(), m, n, A, m, tau, work, lwork[0], devInfo);
@@ -3362,5 +3447,26 @@ public class LibMatrixCUDA {
 				GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_ALLOCATE_DENSE_OUTPUT, System.nanoTime() - t0);
 		return mb.getKey();
 	}
+
+	/**
+	 * Helper method to get the output block (allocated on the GPU)
+	 * Also records performance information into {@link Statistics}
+	 * @param ec		active {@link ExecutionContext}
+	 * @param nnz number of non zeroes in output matrix
+	 * @param instName the invoking instruction's name for record {@link Statistics}.
+	 * @param name	name of input matrix (that the {@link ExecutionContext} is aware of)
+	 * @return	the matrix object
+	 * @throws DMLRuntimeException	if an error occurs
+	 */
+	private static MatrixObject getSparseMatrixOutputForGPUInstruction(ExecutionContext ec, long nnz, String instName, String name) throws DMLRuntimeException {
+		long t0=0;
+		if (GPUStatistics.DISPLAY_STATISTICS) t0 = System.nanoTime();
+		Pair<MatrixObject, Boolean> mb = ec.getSparseMatrixOutputForGPUInstruction(name, nnz);
+		if (mb.getValue())
+			if (GPUStatistics.DISPLAY_STATISTICS)
+				GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_ALLOCATE_SPARSE_OUTPUT, System.nanoTime() - t0);
+		return mb.getKey();
+	}
+
 
 }
