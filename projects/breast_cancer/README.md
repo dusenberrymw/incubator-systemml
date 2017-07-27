@@ -34,7 +34,7 @@ References: <br />
 [4] http://emedicine.medscape.com/article/1947145-workup#c12 <br />
 
 ## Goal & Approach
-In an effort to automate the process of classification, this project aims to develop a large-scale deep learning approach for predicting tumor scores directly from the pixels of whole-slide histopathology images.  Our proposed approach is based on a recent research paper from Stanford [1].  Starting with 500 extremely high-resolution tumor slide images with accompanying score labels, we aim to make use of Apache Spark in a preprocessing step to cut and filter the images into smaller square samples, generating 4.7 million samples for a total of ~7TB of data [2].  We then utilize Apache SystemML on top of Spark to develop and train a custom, large-scale, deep convolutional neural network on these samples, making use of the familiar linear algebra syntax and automatically-distributed execution of SystemML [3].  Our model takes as input the pixel values of the individual samples, and is trained to predict the correct tumor score classification for each one.  In addition to distributed linear algebra, we aim to exploit task-parallelism via parallel for-loops for hyperparameter optimization, as well as hardware acceleration for faster training via a GPU-backed runtime.  We also explore a hybrid setup of using Keras for model training (currently transfer learning by fine-tuning a modified ResNet50 model), and SystemML for distributed scoring of exported models [4].  Ultimately, we aim to develop a model that is sufficiently stronger than existing approaches for the task of breast cancer tumor proliferation score classification.
+In an effort to automate the process of classification, this project aims to develop a large-scale deep learning approach for predicting tumor scores directly from the pixels of whole-slide histopathology images.  Our proposed approach is based on a recent research paper from Stanford [1].  Starting with 500 extremely high-resolution tumor slide images with accompanying score labels, we aim to make use of Apache Spark in a preprocessing step to cut and filter the images into smaller square samples, generating 4.7 million samples for a total of ~7TB of data [2].  We then utilize Apache SystemML on top of Spark to develop and train a custom, large-scale, deep convolutional neural network on these samples, making use of the familiar linear algebra syntax and automatically-distributed execution of SystemML [3].  Our model takes as input the pixel values of the individual samples, and is trained to predict the correct tumor score classification for each one.  In addition to distributed linear algebra, we aim to exploit task-parallelism via parallel for-loops for hyperparameter optimization, as well as hardware acceleration for faster training via a GPU-backed runtime.  We also explore a hybrid setup of using Keras for model training (currently transfer learning by fine-tuning a modified ResNet50 model) [4], and SystemML for distributed scoring of exported models.  Ultimately, we aim to develop a model that is sufficiently stronger than existing approaches for the task of breast cancer tumor proliferation score classification.
 
 References: <br />
 [1] https://web.stanford.edu/group/rubinlab/pubs/2243353.pdf <br />
@@ -63,8 +63,8 @@ References: <br />
 * Python packages:
   * `pip3 install -U matplotlib numpy pandas scipy jupyter ipython scikit-learn scikit-image flask openslide-python`
 * SystemML (bleeding-edge; only driver):
-  * `git clone https://github.com/apache/incubator-systemml.git`
-  * `cd incubator-systemml`
+  * `git clone https://github.com/apache/systemml.git`
+  * `cd systemml`
   * `mvn clean package`
   * `pip3 install -e src/main/python`
 * Keras (bleeding-edge; only driver):
@@ -106,7 +106,7 @@ References: <br />
     # Remove the max result size constraint.
     spark.driver.maxResultSize 0
     # Increase the message size.
-    spark.akka.frameSize 128
+    spark.rpc.message.maxSize 128
     # Extend the network timeout threshold.
     spark.network.timeout 1000s
     # Setup some extra Java options for performance.
