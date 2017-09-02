@@ -128,6 +128,10 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
   #   * train func
   sess = K.get_session()
 
+  # debugger
+  #from tensorflow.python import debug as tf_debug
+  #sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+
   # data
   with tf.name_scope("data"):
     train_dataset = (tf.contrib.data.Dataset.list_files('{}/*/*.jpg'.format(train_path))
@@ -187,11 +191,12 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
     model = model_tower
 
     # call model on dataset images
-    preds = model(images)
+    logits = model(images)
+    preds = tf.round(tf.nn.sigmoid(logits), name="preds")  # implicit threshold at 0.5
 
   # loss
   with tf.name_scope("loss"):
-    loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=preds))
+    loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits))
 
   # freeze all pre-trained model layers.
   for layer in model_base.layers:
@@ -211,20 +216,34 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
   with tf.name_scope("metrics"):
     mean_loss, mean_loss_update_op, mean_loss_reset_op = create_reset_metric(tf.metrics.mean,
         'mean_loss', values=loss)
+    acc, acc_update_op, acc_reset_op = create_reset_metric(tf.metrics.accuracy, 'acc',
+        labels=labels, predictions=preds)
+    ppv, ppv_update_op, ppv_reset_op = create_reset_metric(tf.metrics.precision,
+        'ppv', labels=labels, predictions=preds)
+    recall, recall_update_op, recall_reset_op = create_reset_metric(tf.metrics.recall,
+        'recall', labels=labels, predictions=preds)
+    f1 = 2 * (ppv * recall) / (ppv + recall)
 
     # combine all reset & update ops
-    metric_reset_ops = tf.group(mean_loss_reset_op)
-    metric_update_ops = tf.group(mean_loss_update_op)
+    metric_update_ops = tf.group(mean_loss_update_op, acc_update_op, ppv_update_op,
+        recall_update_op)
+    metric_reset_ops = tf.group(mean_loss_reset_op, acc_reset_op, ppv_reset_op,
+        recall_reset_op)
 
 
   # tensorboard
   images_summary = tf.summary.image("images", images) #, max_outputs=10)
   actual_batch_size_summary = tf.summary.scalar("batch_size", actual_batch_size)
   minibatch_loss_summary = tf.summary.scalar("minibatch_loss", loss)
+  log_summaries = tf.summary.merge([minibatch_loss_summary]) #, actual_batch_size_summary,
+      #images_summary])
   epoch_loss_summary = tf.summary.scalar("epoch_avg_loss", mean_loss)
-  log_summaries = tf.summary.merge([images_summary, minibatch_loss_summary,
-      actual_batch_size_summary])
-  epoch_summaries = tf.summary.merge([epoch_loss_summary])
+  epoch_acc_summary = tf.summary.scalar("epoch_acc", acc)
+  epoch_ppv_summary = tf.summary.scalar("epoch_ppv", ppv)
+  epoch_recall_summary = tf.summary.scalar("epoch_recall", recall)
+  epoch_f1_summary = tf.summary.scalar("epoch_f1", f1)
+  epoch_summaries = tf.summary.merge([epoch_loss_summary, epoch_acc_summary,
+    epoch_ppv_summary, epoch_recall_summary, epoch_f1_summary])
   #all_summaries = tf.summary.merge_all()
 
   # use train and val writers so that plots can be on same graph
@@ -252,7 +271,7 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
           print("train", e, i, loss_val, mean_loss_val)
         else:
           # train & update metrics
-          _, loss_val, _ = sess.run([train_op, minibatch_loss_summary, mean_loss_update_op],
+          _, _, loss_val = sess.run([train_op, metric_update_ops, minibatch_loss_summary],
               feed_dict={K.learning_phase(): 1})
           train_writer.add_summary(summary_str, i)
         i += 1
@@ -268,15 +287,18 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
     while True:
       try:
         # evaluate & update metrics
-        _, loss_val, mean_loss_val = sess.run([metric_update_ops, loss, mean_loss],
+        _, loss_val, mean_loss_val, acc_val = sess.run([metric_update_ops, loss, mean_loss, acc],
             feed_dict={K.learning_phase(): 0})
-        print("val", e, loss_val, mean_loss_val)
+        print("val", e, loss_val, mean_loss_val, acc_val)
       except tf.errors.OutOfRangeError:
         break
     # log average validation metrics for epoch & reset
     print("---epoch {}, val average loss: ".format(e), sess.run(mean_loss))
     val_writer.add_summary(sess.run(epoch_summaries), e)
     sess.run(metric_reset_ops)
+
+    val_writer.flush()
+    #train_writer.flush()
 
 
 #  # fine-tune model
