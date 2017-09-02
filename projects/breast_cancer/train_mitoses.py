@@ -134,6 +134,7 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
 
   # data
   with tf.name_scope("data"):
+    # TODO: add data augmentation function
     train_dataset = (tf.contrib.data.Dataset.list_files('{}/*/*.jpg'.format(train_path))
         .shuffle(10000)
         .map(lambda x: preprocess(x, patch_size), num_threads=threads,
@@ -190,7 +191,7 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
     #model = Model(inputs=ins, outputs=outs)  # multi-GPU, data-parallel model
     model = model_tower
 
-    # call model on dataset images
+    # call model on dataset images to compute logits and predictions
     logits = model(images)
     preds = tf.round(tf.nn.sigmoid(logits), name="preds")  # implicit threshold at 0.5
 
@@ -230,13 +231,14 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
     metric_reset_ops = tf.group(mean_loss_reset_op, acc_reset_op, ppv_reset_op,
         recall_reset_op)
 
-
   # tensorboard
+  # - minibatch summaries
   images_summary = tf.summary.image("images", images) #, max_outputs=10)
   actual_batch_size_summary = tf.summary.scalar("batch_size", actual_batch_size)
   minibatch_loss_summary = tf.summary.scalar("minibatch_loss", loss)
-  log_summaries = tf.summary.merge([minibatch_loss_summary]) #, actual_batch_size_summary,
+  minibatch_summaries = tf.summary.merge([minibatch_loss_summary]) #, actual_batch_size_summary,
       #images_summary])
+  # - epoch summaries
   epoch_loss_summary = tf.summary.scalar("epoch_avg_loss", mean_loss)
   epoch_acc_summary = tf.summary.scalar("epoch_acc", acc)
   epoch_ppv_summary = tf.summary.scalar("epoch_ppv", ppv)
@@ -257,6 +259,8 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
   sess.run([global_init_op, local_init_op])
 
   # classifier train loop
+  # TODO: encapsulate this into a function for reuse during fine-tuning, probably into a
+  # lightweight class with `forward`, `loss`, `train`, `metrics`, etc.
   i = 0
   for e in range(clf_epochs):
     # training
@@ -266,7 +270,7 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
         if log_interval > 0 and i % log_interval == 0:
           # train, update metrics, & log stuff
           _, _, loss_val, summary_str, mean_loss_val = sess.run([train_op, metric_update_ops, loss,
-              log_summaries, mean_loss], feed_dict={K.learning_phase(): 1})
+              minibatch_summaries, mean_loss], feed_dict={K.learning_phase(): 1})
           train_writer.add_summary(summary_str, i)
           print("train", e, i, loss_val, mean_loss_val)
         else:
