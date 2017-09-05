@@ -54,7 +54,7 @@ def get_image(filename, patch_size):
     TensorFlow tensor containing the decoded and resized image.
   """
   image_string = tf.read_file(filename)
-  image_decoded = tf.image.decode_jpeg(image_string, channels=3)
+  image_decoded = tf.image.decode_jpeg(image_string, channels=3)  # shape (h,w,c)
   image_resized = tf.image.resize_images(image_decoded, [patch_size, patch_size])
   return image_resized
 
@@ -68,12 +68,28 @@ def preprocess(filename, patch_size):
       resized.
 
   Returns:
-    Tuple of TensorFlow image tensor, binary label, and filename.
+    Tuple of a TensorFlow image tensor, a binary label, and a filename.
   """
   #  return image_resized, label
-  image = get_image(filename, patch_size)
   label = get_label(filename)
+  label = tf.expand_dims(label, -1)  # tf sucks
+  image = get_image(filename, patch_size)
+  image = normalize(image)
   return image, label, filename
+
+
+def normalize(image):
+  """Normalize an image.
+
+  Args:
+    image: A Tensor of shape (h,w,c).
+
+  Returns:
+    A normalized image Tensor.
+  """
+  image = image[..., ::-1]  # rbg -> bgr
+  image = image - [103.939, 116.779, 123.68]  # mean centering using imagenet means
+  return image
 
 
 def create_reset_metric(metric, scope, **metric_kwargs):  # prob safer to only allow kwargs
@@ -87,7 +103,7 @@ def create_reset_metric(metric, scope, **metric_kwargs):  # prob safer to only a
   Returns:
     The metric op, the metric update op, and a metric reset op.
   """
-  # originally from https://github.com/tensorflow/tensorflow/issues/4814
+  # started with an implementation from https://github.com/tensorflow/tensorflow/issues/4814
   with tf.variable_scope(scope) as scope:
     metric_op, update_op = metric(**metric_kwargs)
     scope_name = tf.contrib.framework.get_name_scope()  # in case nested name/variable scopes
@@ -97,8 +113,8 @@ def create_reset_metric(metric, scope, **metric_kwargs):  # prob safer to only a
   return metric_op, update_op, reset_op
 
 
-def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, finetune_epochs,
-    clf_lr, finetune_lr, log_interval, threads):
+def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, finetune_epochs,
+    clf_lr, finetune_lr, finetune_layers, l2, log_interval, threads):
   """Train a model.
 
   Args:
@@ -108,15 +124,18 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
       This should contain folders for each class.
     exp_path: String path in which to store the model checkpoints, logs,
       etc. for this experiment
-    batch_size: Integer batch size.
     patch_size: Integer length to which the square patches will be
       resized.
+    batch_size: Integer batch size.
     clf_epochs: Integer number of epochs for which to training the new
       classifier layers.
     finetune_epochs: Integer number of epochs for which to fine-tune the
       model.
     clf_lr: Float learning rate for training the new classifier layers.
     finetune_lr: Float learning rate for fine-tuning the model.
+    finetune_layers: Integer number of layers at the end of the
+      pretrained portion of the model to fine-tune.
+    l2: Float L2 global regularization value.
     log_interval: Integer number of steps between logging during
       training.
     threads: Integer number of threads for dataset buffering.
@@ -126,6 +145,7 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
   #   * inference func
   #     * model creation, loss, and compilation
   #   * train func
+
   sess = K.get_session()
 
   # debugger
@@ -150,22 +170,21 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
     iterator = tf.contrib.data.Iterator.from_structure(train_dataset.output_types,
                                                        train_dataset.output_shapes)
     images, labels, filenames = iterator.get_next()
-    labels = tf.expand_dims(labels, -1)  # tf sucks
     actual_batch_size = tf.shape(images)[0]
     train_init_op = iterator.make_initializer(train_dataset)
     val_init_op = iterator.make_initializer(val_dataset)
 
   # models
   with tf.name_scope("model"):
-    # Softmax classifier
+    # logistic regression classifier
+    model_base = keras.models.Sequential()  # dummy since we aren't fine-tuning this model
     input_shape = (patch_size, patch_size, 3)
     inputs = Input(shape=input_shape)
-    x = Flatten()(inputs)  # get rid of this
-    # init Dense weights with Gaussian scaled by sqrt(1/fan_in)
-    logits = Dense(1, kernel_initializer=VarianceScaling(),
-        kernel_regularizer=keras.regularizers.l2(0.01))(x)
+    x = Flatten()(inputs)
+    # init Dense weights with Gaussian scaled by sqrt(2/(fan_in+fan_out))
+    logits = Dense(1, kernel_initializer="glorot_normal",
+        kernel_regularizer=keras.regularizers.l2(l2))(x)
     model_tower = Model(inputs=inputs, outputs=logits, name="model")
-    model_base = keras.models.Sequential()  # dummy since we aren't fine-tuning this model
 
     ## Create model by replacing classifier of VGG16 model with new
     ## classifier specific to the breast cancer problem.
@@ -199,19 +218,31 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
   with tf.name_scope("loss"):
     loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits))
 
-  # freeze all pre-trained model layers.
-  for layer in model_base.layers:
-    layer.trainable = False
-
   # optim
   with tf.name_scope("optim"):
-    #global_step = tf.Variable(0, trainable=False, name='global_step')
-    opt = tf.train.AdamOptimizer(clf_lr)
-    grads_and_vars = opt.compute_gradients(loss, var_list=model.trainable_weights)
-    #train_op = opt.minimize(loss, var_list=model_base.trainable_weights)
-    apply_grads_op = opt.apply_gradients(grads_and_vars) #, global_step=global_step)
-    model_update_ops = model.updates
-    train_op = tf.group(apply_grads_op, *model_update_ops)
+    # classifier
+    # - freeze all pre-trained model layers.
+    for layer in model_base.layers:
+      layer.trainable = False
+    clf_opt = tf.train.AdamOptimizer(clf_lr)
+    clf_grads_and_vars = clf_opt.compute_gradients(loss, var_list=model.trainable_weights)
+    #clf_train_op = opt.minimize(loss, var_list=model.trainable_weights)
+    clf_apply_grads_op = clf_opt.apply_gradients(clf_grads_and_vars)
+    clf_model_update_ops = model.updates
+    clf_train_op = tf.group(clf_apply_grads_op, *clf_model_update_ops)
+
+    # finetuning
+    # - unfreeze a portion of the pre-trained model layers.
+    # note, could make this arbitrary, but for now, fine-tune some number of layers at the *end* of
+    # the pretrained portion of the model
+    for layer in model_base.layers[-finetune_layers:]:
+      layer.trainable = True
+    finetune_opt = tf.train.AdamOptimizer(finetune_lr)
+    finetune_grads_and_vars = finetune_opt.compute_gradients(loss, var_list=model.trainable_weights)
+    #finetune_train_op = opt.minimize(loss, var_list=model.trainable_weights)
+    finetune_apply_grads_op = finetune_opt.apply_gradients(finetune_grads_and_vars)
+    finetune_model_update_ops = model.updates
+    finetune_train_op = tf.group(finetune_apply_grads_op, *finetune_model_update_ops)
 
   # metrics
   with tf.name_scope("metrics"):
@@ -232,13 +263,14 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
         recall_reset_op)
 
   # tensorboard
-  # - minibatch summaries
+  #with tf.name_scope("logging"):
+  # minibatch summaries
   images_summary = tf.summary.image("images", images) #, max_outputs=10)
   actual_batch_size_summary = tf.summary.scalar("batch_size", actual_batch_size)
   minibatch_loss_summary = tf.summary.scalar("minibatch_loss", loss)
   minibatch_summaries = tf.summary.merge([minibatch_loss_summary]) #, actual_batch_size_summary,
       #images_summary])
-  # - epoch summaries
+  # epoch summaries
   epoch_loss_summary = tf.summary.scalar("epoch_avg_loss", mean_loss)
   epoch_acc_summary = tf.summary.scalar("epoch_acc", acc)
   epoch_ppv_summary = tf.summary.scalar("epoch_ppv", ppv)
@@ -261,48 +293,56 @@ def train(train_path, val_path, exp_path, batch_size, patch_size, clf_epochs, fi
   # classifier train loop
   # TODO: encapsulate this into a function for reuse during fine-tuning, probably into a
   # lightweight class with `forward`, `loss`, `train`, `metrics`, etc.
-  i = 0
-  for e in range(clf_epochs):
-    # training
-    sess.run(train_init_op)
-    while True:
-      try:
-        if log_interval > 0 and i % log_interval == 0:
-          # train, update metrics, & log stuff
-          _, _, loss_val, summary_str, mean_loss_val = sess.run([train_op, metric_update_ops, loss,
-              minibatch_summaries, mean_loss], feed_dict={K.learning_phase(): 1})
-          train_writer.add_summary(summary_str, i)
-          print("train", e, i, loss_val, mean_loss_val)
-        else:
-          # train & update metrics
-          _, _, loss_val = sess.run([train_op, metric_update_ops, minibatch_loss_summary],
-              feed_dict={K.learning_phase(): 1})
-          train_writer.add_summary(summary_str, i)
-        i += 1
-      except tf.errors.OutOfRangeError:
-        break
-    # log average training metrics for epoch & reset
-    print("---epoch {}, train average loss: ".format(e), sess.run(mean_loss))
-    train_writer.add_summary(sess.run(epoch_summaries), e)
-    sess.run(metric_reset_ops)
+  global_step = 0  # training step
+  global_epoch = 0  # training epoch
+  for train_op, epochs in [(clf_train_op, clf_epochs), (finetune_train_op, finetune_epochs)]:
+    for _ in range(epochs):
+      # training
+      sess.run(train_init_op)
+      while True:
+        try:
+          if log_interval > 0 and global_step % log_interval == 0:
+            # train, update metrics, & log stuff
+            _, _, loss_val, summary_str, mean_loss_val, acc_val = sess.run([train_op,
+                metric_update_ops, loss, minibatch_summaries, mean_loss, acc],
+                feed_dict={K.learning_phase(): 1})
+            train_writer.add_summary(summary_str, global_step)
+            print("train", global_epoch, global_step, loss_val, mean_loss_val, acc_val)
+          else:
+            # train & update metrics
+            _, _, loss_val = sess.run([train_op, metric_update_ops, minibatch_loss_summary],
+                feed_dict={K.learning_phase(): 1})
+            train_writer.add_summary(summary_str, global_step)
+          global_step += 1
+        except tf.errors.OutOfRangeError:
+          break
+      # log average training metrics for epoch & reset
+      print("---epoch {}, train average loss: ".format(global_epoch), sess.run(mean_loss))
+      train_writer.add_summary(sess.run(epoch_summaries), global_epoch)
+      sess.run(metric_reset_ops)
 
-    # validation
-    sess.run(val_init_op)
-    while True:
-      try:
-        # evaluate & update metrics
-        _, loss_val, mean_loss_val, acc_val = sess.run([metric_update_ops, loss, mean_loss, acc],
-            feed_dict={K.learning_phase(): 0})
-        print("val", e, loss_val, mean_loss_val, acc_val)
-      except tf.errors.OutOfRangeError:
-        break
-    # log average validation metrics for epoch & reset
-    print("---epoch {}, val average loss: ".format(e), sess.run(mean_loss))
-    val_writer.add_summary(sess.run(epoch_summaries), e)
-    sess.run(metric_reset_ops)
+      # validation
+      sess.run(val_init_op)
+      vi = 0  # validation step
+      while True:
+        try:
+          # evaluate & update metrics
+          _, loss_val, mean_loss_val, acc_val = sess.run([metric_update_ops, loss, mean_loss, acc],
+              feed_dict={K.learning_phase(): 0})
+          if log_interval > 0 and vi % log_interval == 0:
+            print("val", global_epoch, vi, loss_val, mean_loss_val, acc_val)
+          vi += 1
+        except tf.errors.OutOfRangeError:
+          break
+      # log average validation metrics for epoch & reset
+      print("---epoch {}, val average loss: ".format(global_epoch), sess.run(mean_loss))
+      val_writer.add_summary(sess.run(epoch_summaries), global_epoch)
+      sess.run(metric_reset_ops)
 
-    val_writer.flush()
-    #train_writer.flush()
+      val_writer.flush()
+      #train_writer.flush()
+
+      global_epoch += 1
 
 
 #  # fine-tune model
@@ -331,44 +371,59 @@ if __name__ == "__main__":
   # parse args
   parser = argparse.ArgumentParser()
   parser.add_argument("--patches_path", default=os.path.join("data", "mitoses", "patches"),
-      help="path to the generated image patches containing `train` & `val` folders \
-            (default: %(default)s)")
-  parser.add_argument("--exp_path", default=os.path.join("experiments", "mitoses", "sanity",
-      datetime.strftime(datetime.today(), "%y-%m-%d_%H:%M:%S")),
-      help="path in which to store the model checkpoints, logs, etc. for this experiment \
-            (default: %(default)s)")
-  parser.add_argument("--batch_size", type=int, default=32,
-      help="batch size (default: %(default)s)")
+      help="path to the generated image patches containing `train` & `val` folders "\
+           "(default: %(default)s)")
+  parser.add_argument("--exp_parent_path", default=os.path.join("experiments", "mitoses", "sanity"),
+      help="parent path in which to store experiment folders (default: %(default)s)")
+  parser.add_argument("--exp_name", default=None,
+      help="path within the experiment parent path in which to store the model checkpoints, "\
+           "logs, etc. for this experiment "\
+           "(default: %%y-%%m-%%d_%%H:%%M:%%S_patch_size=x_batch_size=x_clf_epochs=x_"\
+           "finetune_epochs=x_clf_lr=x_finetune_lr=x_l2=x)")
   parser.add_argument("--patch_size", type=int, default=64,
       help="integer length to which the square patches will be resized (default: %(default)s)")
+  parser.add_argument("--batch_size", type=int, default=32,
+      help="batch size (default: %(default)s)")
   parser.add_argument("--clf_epochs", type=int, default=1,
-      help="number of epochs for which to training the new classifier layers \
-           (default: %(default)s)")
-  parser.add_argument("--finetune_epochs", type=int, default=1,
+      help="number of epochs for which to training the new classifier layers "\
+           "(default: %(default)s)")
+  parser.add_argument("--finetune_epochs", type=int, default=0,
       help="number of epochs for which to fine-tune the model (default: %(default)s)")
-  parser.add_argument("--clf_lr", type=float, default=0.001,
-      help="learning rate for training the new classifier layers \
-           (default: %(default)s)")
-  parser.add_argument("--finetune_lr", type=int, default=1e-5,
+  parser.add_argument("--clf_lr", type=float, default=1e-5,
+      help="learning rate for training the new classifier layers (default: %(default)s)")
+  parser.add_argument("--finetune_lr", type=float, default=1e-7,
       help="learning rate for fine-tuning the model (default: %(default)s)")
+  parser.add_argument("--finetune_layers", type=int, default=0,
+      help="number of layers at the end of the pretrained portion of the model to fine-tune "\
+           "(default: %(default)s)")
+  parser.add_argument("--l2", type=float, default=0.01,
+      help="amount of l2 weight regularization (default: %(default)s)")
   parser.add_argument("--log_interval", type=int, default=100,
-      help="number of steps between logging during training")
+      help="number of steps between logging during training (default: %(default)s)")
   parser.add_argument("--threads", type=int, default=5,
-      help="number of threads for dataset buffering")
+      help="number of threads for dataset buffering (default: %(default)s)")
+
   args = parser.parse_args()
 
   # set any other defaults
   train_path = os.path.join(args.patches_path, "train")
   val_path = os.path.join(args.patches_path, "val")
 
+  if args.exp_name == None:
+    date = datetime.strftime(datetime.today(), "%y-%m-%d_%H:%M:%S")
+    args.exp_name = f"{date}_patch_size={args.patch_size}_batch_size={args.batch_size}_"\
+                    f"clf_epochs={args.clf_epochs}_finetune_epochs={args.finetune_epochs}_"\
+                    f"clf_lr={args.clf_lr}_finetune_lr={args.finetune_lr}_l2={args.l2})"
+  exp_path = os.path.join(args.exp_parent_path, args.exp_name)
+
   # make experiment folder (TODO: fail if it already exists)
-  os.makedirs(args.exp_path, exist_ok=True)
-  print("experiment directory: {}".format(args.exp_path))
+  os.makedirs(exp_path, exist_ok=True)
+  print("experiment directory: {}".format(exp_path))
 
   # train!
-  train(train_path, val_path, args.exp_path, args.batch_size, args.patch_size,
-      args.clf_epochs, args.finetune_epochs, args.clf_lr, args.finetune_lr, args.log_interval,
-      args.threads)
+  train(train_path, val_path, exp_path, args.patch_size, args.batch_size,
+      args.clf_epochs, args.finetune_epochs, args.clf_lr, args.finetune_lr, args.finetune_layers,
+      args.l2, args.log_interval, args.threads)
 
 
 # ---
