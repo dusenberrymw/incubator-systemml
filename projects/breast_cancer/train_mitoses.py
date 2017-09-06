@@ -1,17 +1,16 @@
 """Training - mitosis detection"""
 import argparse
 from datetime import datetime
-import math
 import os
+import pickle
 
 import keras
 from keras import backend as K
-from keras.applications.vgg16 import VGG16, preprocess_input
-from keras.callbacks import ModelCheckpoint, TensorBoard
+from keras.applications.vgg16 import VGG16
+from keras.applications.resnet50 import ResNet50
 from keras.initializers import VarianceScaling
-from keras.layers import Dense, Dropout, Flatten, Input
+from keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D, Input
 from keras.models import Model
-from keras.preprocessing.image import ImageDataGenerator
 import numpy as np
 import tensorflow as tf
 
@@ -114,7 +113,7 @@ def create_reset_metric(metric, scope, **metric_kwargs):  # prob safer to only a
 
 
 def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, finetune_epochs,
-    clf_lr, finetune_lr, finetune_layers, l2, log_interval, threads):
+    clf_lr, finetune_lr, finetune_layers, l2, log_interval, threads, checkpoint, resume):
   """Train a model.
 
   Args:
@@ -139,11 +138,17 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
     log_interval: Integer number of steps between logging during
       training.
     threads: Integer number of threads for dataset buffering.
+    checkpoint: Boolean flag for whether or not to save a checkpoint
+      after each epoch.
+    resume: Boolean flag for whether or not to resume training from a
+      checkpoint.
   """
   # TODO: break this out into:
   #   * data gen func
   #   * inference func
-  #     * model creation, loss, and compilation
+  #   * loss func
+  #   * metrics func
+  #   * logging func
   #   * train func
 
   sess = K.get_session()
@@ -170,32 +175,48 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
     iterator = tf.contrib.data.Iterator.from_structure(train_dataset.output_types,
                                                        train_dataset.output_shapes)
     images, labels, filenames = iterator.get_next()
-    actual_batch_size = tf.shape(images)[0]
     train_init_op = iterator.make_initializer(train_dataset)
     val_init_op = iterator.make_initializer(val_dataset)
+    actual_batch_size = tf.shape(images)[0]
+    input_shape = (patch_size, patch_size, 3)
 
   # models
   with tf.name_scope("model"):
-    # logistic regression classifier
-    model_base = keras.models.Sequential()  # dummy since we aren't fine-tuning this model
-    input_shape = (patch_size, patch_size, 3)
+    ## logistic regression classifier
+    #model_base = keras.models.Sequential()  # dummy since we aren't fine-tuning this model
+    #inputs = Input(shape=input_shape)
+    #x = Flatten()(inputs)
+    ## init Dense weights with Gaussian scaled by sqrt(2/(fan_in+fan_out))
+    #logits = Dense(1, kernel_initializer="glorot_normal",
+    #    kernel_regularizer=keras.regularizers.l2(l2))(x)
+    #model_tower = Model(inputs=inputs, outputs=logits, name="model")
+
+    # Create model by replacing classifier of VGG16 model with new
+    # classifier specific to the breast cancer problem.
+    #with tf.device("/cpu"):
     inputs = Input(shape=input_shape)
-    x = Flatten()(inputs)
+    model_base = VGG16(include_top=False, input_shape=input_shape, input_tensor=inputs)
+    x = model_base.output
+    #x = Flatten()(x)
+    x = GlobalAveragePooling2D()(x)
+    #x = Dropout(0.5)(x)
     # init Dense weights with Gaussian scaled by sqrt(2/(fan_in+fan_out))
     logits = Dense(1, kernel_initializer="glorot_normal",
         kernel_regularizer=keras.regularizers.l2(l2))(x)
     model_tower = Model(inputs=inputs, outputs=logits, name="model")
 
-    ## Create model by replacing classifier of VGG16 model with new
+    ## Create model by replacing classifier of ResNet50 model with new
     ## classifier specific to the breast cancer problem.
     ##with tf.device("/cpu"):
     #inputs = Input(shape=input_shape)
-    #model_base = VGG16(include_top=False, input_shape=input_shape, input_tensor=inputs)
-    #x = Flatten()(model_base.output)  # could also use GlobalAveragePooling2D since output is (None, 1, 1, 2048)
-    #x = Dropout(0.5)(x)
-    ## init Dense weights with Gaussian scaled by sqrt(1/fan_in)
-    #preds = Dense(1, kernel_initializer=VarianceScaling(), activation="sigmoid")(x)
-    #model_tower = Model(inputs=inputs, outputs=preds, name="model")
+    #model_base = ResNet50(include_top=False, input_shape=input_shape, input_tensor=inputs)
+    #x = model_base.output
+    #x = Flatten()(x)
+    ##x = GlobalAveragePooling2D()(x)
+    ## init Dense weights with Gaussian scaled by sqrt(2/(fan_in+fan_out))
+    #logits = Dense(1, kernel_initializer="glorot_normal",
+    #    kernel_regularizer=keras.regularizers.l2(l2))(x)
+    #model_tower = Model(inputs=inputs, outputs=logits, name="model")
 
     # TODO: add this when it's necessary, and move to a separate function
     ## Multi-GPU exploitation via a linear combination of GPU loss functions.
@@ -209,6 +230,7 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
     #    outs.append(out)
     #model = Model(inputs=ins, outputs=outs)  # multi-GPU, data-parallel model
     model = model_tower
+    #import pdb; pdb.set_trace()
 
     # call model on dataset images to compute logits and predictions
     logits = model(images)
@@ -289,14 +311,22 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
   global_init_op = tf.global_variables_initializer()
   local_init_op = tf.local_variables_initializer()
   sess.run([global_init_op, local_init_op])
-
-  # classifier train loop
-  # TODO: encapsulate this into a function for reuse during fine-tuning, probably into a
-  # lightweight class with `forward`, `loss`, `train`, `metrics`, etc.
   global_step = 0  # training step
   global_epoch = 0  # training epoch
+
+  # save ops
+  checkpoint_filename = os.path.join(exp_path, "model.ckpt")
+  global_step_epoch_filename = os.path.join(exp_path, "global_step_epoch.pickle")
+  saver = tf.train.Saver()
+
+  if resume:
+    saver.restore(sess, checkpoint_filename)
+    with open(global_step_epoch_filename, "rb") as f:
+      global_step, global_epoch = pickle.load(f)
+
+  # classifier + fine-tuning combined training loop
   for train_op, epochs in [(clf_train_op, clf_epochs), (finetune_train_op, finetune_epochs)]:
-    for _ in range(epochs):
+    for _ in range(global_epoch, global_epoch+epochs):  # allow for resuming of training
       # training
       sess.run(train_init_op)
       while True:
@@ -312,12 +342,12 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
             # train & update metrics
             _, _, loss_val = sess.run([train_op, metric_update_ops, minibatch_loss_summary],
                 feed_dict={K.learning_phase(): 1})
-            train_writer.add_summary(summary_str, global_step)
           global_step += 1
         except tf.errors.OutOfRangeError:
           break
       # log average training metrics for epoch & reset
-      print("---epoch {}, train average loss: ".format(global_epoch), sess.run(mean_loss))
+      print("---epoch {}, train avg loss: {}, train acc: {}".format(global_epoch,
+          *sess.run([mean_loss, acc])))
       train_writer.add_summary(sess.run(epoch_summaries), global_epoch)
       sess.run(metric_reset_ops)
 
@@ -335,7 +365,8 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
         except tf.errors.OutOfRangeError:
           break
       # log average validation metrics for epoch & reset
-      print("---epoch {}, val average loss: ".format(global_epoch), sess.run(mean_loss))
+      loss_val, acc_val = sess.run([mean_loss, acc])
+      print("---epoch {}, val avg loss: {}, val acc: {}".format(global_epoch, loss_val, acc_val))
       val_writer.add_summary(sess.run(epoch_summaries), global_epoch)
       sess.run(metric_reset_ops)
 
@@ -343,6 +374,16 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
       #train_writer.flush()
 
       global_epoch += 1
+
+      # save model
+      if checkpoint:
+        keras_filename = os.path.join(exp_path,
+            f"{acc_val:.5}_acc_{loss_val:.5}_loss_{global_epoch}_epoch_model.hdf5")
+        model.save(keras_filename)  # keras model
+        saver.save(sess, checkpoint_filename)  # full TF graph
+        with open(global_step_epoch_filename, "wb") as f:
+          pickle.dump((global_step, global_epoch), f)  # step & epoch
+        print("Saved model file to {}".format(keras_filename))
 
 
 #  # fine-tune model
@@ -402,6 +443,14 @@ if __name__ == "__main__":
       help="number of steps between logging during training (default: %(default)s)")
   parser.add_argument("--threads", type=int, default=5,
       help="number of threads for dataset buffering (default: %(default)s)")
+  parser.add_argument("--resume", default=False, action="store_true",
+      help="resume training from a checkpoint (default: %(default)s)")
+  checkpoint_parser = parser.add_mutually_exclusive_group(required=False)
+  checkpoint_parser.add_argument("--checkpoint", dest="checkpoint", action="store_true",
+      help="save a checkpoint after each epoch (default: True)")
+  checkpoint_parser.add_argument("--no_checkpoint", dest="checkpoint", action="store_false",
+      help="do not save a checkpoint after each epoch (default: False)")
+  parser.set_defaults(checkpoint=True)
 
   args = parser.parse_args()
 
@@ -413,7 +462,7 @@ if __name__ == "__main__":
     date = datetime.strftime(datetime.today(), "%y-%m-%d_%H:%M:%S")
     args.exp_name = f"{date}_patch_size={args.patch_size}_batch_size={args.batch_size}_"\
                     f"clf_epochs={args.clf_epochs}_finetune_epochs={args.finetune_epochs}_"\
-                    f"clf_lr={args.clf_lr}_finetune_lr={args.finetune_lr}_l2={args.l2})"
+                    f"clf_lr={args.clf_lr}_finetune_lr={args.finetune_lr}_l2={args.l2}"
   exp_path = os.path.join(args.exp_parent_path, args.exp_name)
 
   # make experiment folder (TODO: fail if it already exists)
@@ -423,7 +472,7 @@ if __name__ == "__main__":
   # train!
   train(train_path, val_path, exp_path, args.patch_size, args.batch_size,
       args.clf_epochs, args.finetune_epochs, args.clf_lr, args.finetune_lr, args.finetune_layers,
-      args.l2, args.log_interval, args.threads)
+      args.l2, args.log_interval, args.threads, args.checkpoint, args.resume)
 
 
 # ---
