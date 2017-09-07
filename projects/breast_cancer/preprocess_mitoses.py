@@ -223,22 +223,6 @@ def preprocess(images_path, labels_path, base_save_path, train_size, patch_size,
       of overlap of normal patches with mitosis patches.
     seed: Integer random seed for NumPy.
   """
-  ## TODO: move these variables to an arg parser
-  #base_path = os.path.join("data", "mitoses")
-  #images_path = os.path.join(base_path, "mitoses_train_image_data")
-  #labels_path = os.path.join(base_path, "mitoses_train_ground_truth")
-  #base_save_path = os.path.join(base_path, "patches")
-  ##shutil.rmtree(base_save_path)  # clear out previous patches -- careful!
-
-
-  #train_size = 0.8
-  #size = 64
-  #num_rand_translations = 10
-  #max_shift = int(size/4)
-  #num_normal = num_rand_translations + 1
-  #overlap_threshold = 0.25
-  ## end args
-
   # set numpy seed
   np.random.seed(seed)
 

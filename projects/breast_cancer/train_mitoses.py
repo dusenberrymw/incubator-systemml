@@ -112,6 +112,51 @@ def create_reset_metric(metric, scope, **metric_kwargs):  # prob safer to only a
   return metric_op, update_op, reset_op
 
 
+def initialize_variables(sess):
+  """Initialize variables for training.
+
+  This initializes all tensor variables in the graph, as well as
+  variables for the global step and epoch, the latter two of which
+  are returned as native Python variables.
+
+  Args:
+    sess: A TensorFlow Session.
+
+  Returns:
+    Integer global step and global epoch values.
+  """
+  # NOTE: Keras keeps track of the variables that are initialized, and any call to
+  # `K.get_session()`, which is even used internally, will include a call to initialize variables
+  # via `K._initalize_variables()`.  There is a situation in which resuming from a previous
+  # checkpoint and then saving the model after the first epoch will result in part of the model
+  # being reinitialized.  The problem is that calling `K.get_session()` here is too soon to
+  # initialize any variables, and then the resume branch skips any variable initialization, and then
+  # the `model.save` codepath ends up calling `K.get_session()`, thus causing part of the model to
+  # be reinitialized.  Specifically, the VGG base is fine because it is initialized when the
+  # pretrained weights are added in, but the new dense classifier will not be marked as initialized
+  # by Keras.  The non-resume branch will initialize any variables not initialized by Keras yet, and
+  # thus will avoid this issue.  It could be possible to use
+  # `K.manual_variable_initialization(True)` and then manually initialize all variables, but this
+  # would cause any pretrained weights to be removed.  Instead, we should initialize all variables
+  # first with the equivalent of `K._initialize_variables`, and then call resume.
+  # NOTE: the global variables initializer will erase the pretrained weights,
+  # so we instead only initialize the other variables.
+  # NOTE: reproduced from K._initialize_variables()
+  # TODO: extract this out into a function and add a test case
+  variables = tf.global_variables()
+  uninitialized_variables = []
+  for v in variables:
+    if not hasattr(v, '_keras_initialized') or not v._keras_initialized:
+      uninitialized_variables.append(v)
+      v._keras_initialized = True
+  global_init_op = tf.variables_initializer(uninitialized_variables)
+  local_init_op = tf.local_variables_initializer()
+  sess.run([global_init_op, local_init_op])
+  global_step = 0  # training step
+  global_epoch = 0  # training epoch
+  return global_step, global_epoch
+
+
 def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, finetune_epochs,
     clf_lr, finetune_lr, finetune_layers, l2, log_interval, threads, checkpoint, resume):
   """Train a model.
@@ -313,37 +358,7 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
   saver = tf.train.Saver()
 
   # initialize stuff
-  # NOTE: Keras keeps track of the variables that are initialized, and any call to
-  # `K.get_session()`, which is even used internally, will include a call to initialize variables
-  # via `K._initalize_variables()`.  There is a situation in which resuming from a previous
-  # checkpoint and then saving the model after the first epoch will result in part of the model
-  # being reinitialized.  The problem is that calling `K.get_session()` here is too soon to
-  # initialize any variables, and then the resume branch skips any variable initialization, and then
-  # the `model.save` codepath ends up calling `K.get_session()`, thus causing part of the model to
-  # be reinitialized.  Specifically, the VGG base is fine because it is initialized when the
-  # pretrained weights are added in, but the new dense classifier will not be marked as initialized
-  # by Keras.  The non-resume branch will initialize any variables not initialized by Keras yet, and
-  # thus will avoid this issue.  It could be possible to use
-  # `K.manual_variable_initialization(True)` and then manually initialize all variables, but this
-  # would cause any pretrained weights to be removed.  Instead, we should initialize all variables
-  # first with the equivalent of `K._initialize_variables`, and then call resume.
-  # NOTE: the global variables initializer will erase the pretrained weights,
-  # so we instead only initialize the other variables.
-  # NOTE: reproduced from K._initialize_variables()
-  # TODO: extract this out into a function and add a test case
-  variables = tf.global_variables()
-  uninitialized_variables = []
-  for v in variables:
-    if not hasattr(v, '_keras_initialized') or not v._keras_initialized:
-      uninitialized_variables.append(v)
-      v._keras_initialized = True
-  global_init_op = tf.variables_initializer(uninitialized_variables)
-  local_init_op = tf.local_variables_initializer()
-  sess.run([global_init_op, local_init_op])
-  global_step = 0  # training step
-  global_epoch = 0  # training epoch
-  for v in tf.global_variables():
-    assert hasattr(v, '_keras_initialized') and v._keras_initialized, v  # check for initialization
+  global_step, global_epoch = initialize_variables(sess)
 
   if resume:
     saver.restore(sess, checkpoint_filename)
@@ -412,28 +427,6 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
         print("Saved model file to {}".format(keras_filename))
 
 
-#  # fine-tune model
-#  # Unfreeze some subset of the model and fine-tune by training slowly with low lr.
-#  for layer in model_base.layers:
-#    if layer.name.startswith("block5"):
-#      layer.trainable = True
-#
-#  optim = keras.optimizers.SGD(lr=0.0001, momentum=0.9)
-#  model.compile(optimizer=optim, loss="binary_crossentropy", metrics=metrics)
-#                #loss_weights=[1/num_gpus]*num_gpus, metrics=metrics)
-#
-#  initial_epoch = clf_epochs
-#  epochs = initial_epoch + finetune_epochs
-#  hist2 = model.fit_generator(train_generator, steps_per_epoch=train_batches,
-#                              #validation_data=val_generator, validation_steps=val_batches,
-#                              validation_data=val_data,
-#                              epochs=epochs, initial_epoch=initial_epoch,
-#                              class_weight=class_weights, callbacks=callbacks) #,
-#                              #max_q_size=8, nb_worker=1, pickle_safe=False)
-#
-
-
-
 if __name__ == "__main__":
   # parse args
   parser = argparse.ArgumentParser()
@@ -492,7 +485,8 @@ if __name__ == "__main__":
   exp_path = os.path.join(args.exp_parent_path, args.exp_name)
 
   # make experiment folder (TODO: fail if it already exists)
-  os.makedirs(exp_path, exist_ok=True)
+  if not os.path.exists(exp_path):
+    os.makedirs(exp_path)  #, exist_ok=True)
   print("experiment directory: {}".format(exp_path))
 
   # train!
@@ -566,4 +560,39 @@ def test_resettable_metric():
   assert np.allclose([out_up], [1/8])
   assert np.allclose([sess.run(mean_op)], [1/8])
   assert np.allclose([sess.run(mean_op)], [1/8])
+
+
+def test_initialize_variables():
+  import pytest
+  sess = K.get_session()
+
+  # create model with a mix of pretrained and new weights
+  # NOTE: the pretrained layers will be initialized by Keras on creation, while the new Dense
+  # layer will remain uninitialized
+  input_shape = (224,224,3)
+  inputs = Input(shape=input_shape)
+  model_base = VGG16(include_top=False, input_shape=input_shape, input_tensor=inputs)
+  x = model_base.output
+  x = GlobalAveragePooling2D()(x)
+  logits = Dense(1)(x)
+  model = Model(inputs=inputs, outputs=logits, name="model")
+
+  # the new dense layer is not initialized yet
+  with pytest.raises(AssertionError):
+    for v in tf.global_variables():
+      assert hasattr(v, '_keras_initialized') and v._keras_initialized  # check for initialization
+
+  # initialize variables, including marking them with the `_keras_initialized` attribute
+  initialize_variables(sess)
+
+  # check that everything is initialized and marked with the `_keras_initialized` attribute
+  # NOTE: this is important for a hybrid Keras & TensorFlow setup where Keras is being used for the
+  # model creation part, and raw TensorFlow is being used for the rest.  if variables are not
+  # initialized *and* marked with the special Keras attribute, then certain Keras functions will end
+  # up accidentally reinitializing variables when they use `K.get_session()` internally.  In a pure
+  # Keras setup, this would not happen since the model would be initialized at the proper times.  In
+  # a Keras & TensorFlow hybrid setup, this can cause issues.  By encapsulating this nonsense in a
+  # function, we can avoid these problems.
+  for v in tf.global_variables():
+    assert hasattr(v, '_keras_initialized') and v._keras_initialized  # check for initialization
 
