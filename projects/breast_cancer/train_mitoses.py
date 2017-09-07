@@ -307,24 +307,50 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
   train_writer = tf.summary.FileWriter(os.path.join(exp_path, "train"))
   val_writer = tf.summary.FileWriter(os.path.join(exp_path, "val"))
 
-  # initialize stuff
-  global_init_op = tf.global_variables_initializer()
-  local_init_op = tf.local_variables_initializer()
-  sess.run([global_init_op, local_init_op])
-  global_step = 0  # training step
-  global_epoch = 0  # training epoch
-
   # save ops
   checkpoint_filename = os.path.join(exp_path, "model.ckpt")
   global_step_epoch_filename = os.path.join(exp_path, "global_step_epoch.pickle")
   saver = tf.train.Saver()
+
+  # initialize stuff
+  # NOTE: Keras keeps track of the variables that are initialized, and any call to
+  # `K.get_session()`, which is even used internally, will include a call to initialize variables
+  # via `K._initalize_variables()`.  There is a situation in which resuming from a previous
+  # checkpoint and then saving the model after the first epoch will result in part of the model
+  # being reinitialized.  The problem is that calling `K.get_session()` here is too soon to
+  # initialize any variables, and then the resume branch skips any variable initialization, and then
+  # the `model.save` codepath ends up calling `K.get_session()`, thus causing part of the model to
+  # be reinitialized.  Specifically, the VGG base is fine because it is initialized when the
+  # pretrained weights are added in, but the new dense classifier will not be marked as initialized
+  # by Keras.  The non-resume branch will initialize any variables not initialized by Keras yet, and
+  # thus will avoid this issue.  It could be possible to use
+  # `K.manual_variable_initialization(True)` and then manually initialize all variables, but this
+  # would cause any pretrained weights to be removed.  Instead, we should initialize all variables
+  # first with the equivalent of `K._initialize_variables`, and then call resume.
+  # NOTE: the global variables initializer will erase the pretrained weights,
+  # so we instead only initialize the other variables.
+  # NOTE: reproduced from K._initialize_variables()
+  # TODO: extract this out into a function and add a test case
+  variables = tf.global_variables()
+  uninitialized_variables = []
+  for v in variables:
+    if not hasattr(v, '_keras_initialized') or not v._keras_initialized:
+      uninitialized_variables.append(v)
+      v._keras_initialized = True
+  global_init_op = tf.variables_initializer(uninitialized_variables)
+  local_init_op = tf.local_variables_initializer()
+  sess.run([global_init_op, local_init_op])
+  global_step = 0  # training step
+  global_epoch = 0  # training epoch
+  for v in tf.global_variables():
+    assert hasattr(v, '_keras_initialized') and v._keras_initialized, v  # check for initialization
 
   if resume:
     saver.restore(sess, checkpoint_filename)
     with open(global_step_epoch_filename, "rb") as f:
       global_step, global_epoch = pickle.load(f)
 
-  # classifier + fine-tuning combined training loop
+  # new classifier layers + fine-tuning combined training loop
   for train_op, epochs in [(clf_train_op, clf_epochs), (finetune_train_op, finetune_epochs)]:
     for _ in range(global_epoch, global_epoch+epochs):  # allow for resuming of training
       # training
@@ -379,7 +405,7 @@ def train(train_path, val_path, exp_path, patch_size, batch_size, clf_epochs, fi
       if checkpoint:
         keras_filename = os.path.join(exp_path,
             f"{acc_val:.5}_acc_{loss_val:.5}_loss_{global_epoch}_epoch_model.hdf5")
-        model.save(keras_filename)  # keras model
+        model.save(keras_filename, include_optimizer=False)  # keras model
         saver.save(sess, checkpoint_filename)  # full TF graph
         with open(global_step_epoch_filename, "wb") as f:
           pickle.dump((global_step, global_epoch), f)  # step & epoch
@@ -459,10 +485,10 @@ if __name__ == "__main__":
   val_path = os.path.join(args.patches_path, "val")
 
   if args.exp_name == None:
-    date = datetime.strftime(datetime.today(), "%y-%m-%d_%H:%M:%S")
-    args.exp_name = f"{date}_patch_size={args.patch_size}_batch_size={args.batch_size}_"\
-                    f"clf_epochs={args.clf_epochs}_finetune_epochs={args.finetune_epochs}_"\
-                    f"clf_lr={args.clf_lr}_finetune_lr={args.finetune_lr}_l2={args.l2}"
+    date = datetime.strftime(datetime.today(), "%y%m%d_%H%M%S")
+    args.exp_name = f"{date}_patch_size_{args.patch_size}_batch_size_{args.batch_size}_"\
+                    f"clf_epochs_{args.clf_epochs}_finetune_epochs_{args.finetune_epochs}_"\
+                    f"clf_lr_{args.clf_lr}_finetune_lr_{args.finetune_lr}_l2_{args.l2}"
   exp_path = os.path.join(args.exp_parent_path, args.exp_name)
 
   # make experiment folder (TODO: fail if it already exists)
